@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:secret_gallery/core/services/prefs_service.dart';
 import 'core/security/pin_service.dart';
 import 'features/lock/pin_screen.dart';
 import 'features/albums/albums_screen.dart';
@@ -46,6 +47,7 @@ class _AppEntryState extends State<AppEntry> {
   @override
   void initState() {
     super.initState();
+    _applySettings();
     _check();
   }
 
@@ -56,6 +58,24 @@ class _AppEntryState extends State<AppEntry> {
       _loading = false;
     });
   }
+
+  Future<void> _applySettings() async {
+  // Evitar capturas
+  final preventScreenshot =
+      await PrefsService.instance.getPreventScreenshot();
+  if (preventScreenshot) {
+    // Requiere plugin flutter_windowmanager
+    // Por ahora solo modo inmersivo
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.manual,
+        overlays: SystemUiOverlay.values);
+  }
+
+  // Mantener pantalla encendida
+  final keepOn = await PrefsService.instance.getKeepScreenOn();
+  if (keepOn) {
+    // Requiere plugin wakelock_plus
+  }
+}
 
   @override
   Widget build(BuildContext context) {

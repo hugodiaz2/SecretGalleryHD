@@ -15,11 +15,11 @@ class ViewSelectorSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final options = [
-      _ViewOption(type: GridViewType.grid3, label: '3 × 3', cols: 3),
-      _ViewOption(type: GridViewType.grid4, label: '4 × 4', cols: 4),
-      _ViewOption(type: GridViewType.grid5, label: '5 × 5', cols: 5),
-      _ViewOption(type: GridViewType.grid6, label: '6 × 6', cols: 6),
-      _ViewOption(type: GridViewType.list, label: 'Lista', cols: 0),
+      const _ViewOption(type: GridViewType.grid3, label: '3 × 3', cols: 3),
+      const _ViewOption(type: GridViewType.grid4, label: '4 × 4', cols: 4),
+      const _ViewOption(type: GridViewType.grid5, label: '5 × 5', cols: 5),
+      const _ViewOption(type: GridViewType.grid6, label: '6 × 6', cols: 6),
+      const _ViewOption(type: GridViewType.list, label: 'Lista', cols: 0),
     ];
 
     return Dialog(

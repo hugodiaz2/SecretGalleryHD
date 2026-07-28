@@ -46,10 +46,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           .getPhotoBytes(widget.video['encrypted_path']);
 
       if (bytes == null) {
-        if (mounted) setState(() {
+        if (mounted) {
+          setState(() {
           _error = 'No se pudo cargar el video';
           _loading = false;
         });
+        }
         return;
       }
 
@@ -75,10 +77,12 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
       if (mounted) setState(() => _loading = false);
     } catch (e) {
-      if (mounted) setState(() {
+      if (mounted) {
+        setState(() {
         _error = 'Error al reproducir: $e';
         _loading = false;
       });
+      }
     }
   }
 

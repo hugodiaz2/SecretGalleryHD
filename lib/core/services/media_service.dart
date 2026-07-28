@@ -23,7 +23,7 @@ class MediaService {
     return permission.isAuth || permission.hasAccess;
   }
 
-  // ── Álbumes de galería (fotos o videos) ─────────────────
+  // ── Álbumes de galería ───────────────────────────────────
   Future<List<AssetPathEntity>> getGalleryAlbums({
     RequestType type = RequestType.image,
   }) async {
@@ -63,7 +63,7 @@ class MediaService {
     return await album.getAssetListRange(start: 0, end: count);
   }
 
-  // ── Todas las imágenes (usado internamente) ──────────────
+  // ── Todas las imágenes ───────────────────────────────────
   Future<List<AssetEntity>> getGalleryImages() async {
     final albums = await PhotoManager.getAssetPathList(
       type: RequestType.image,
@@ -93,11 +93,9 @@ class MediaService {
       }
 
       try {
-        // 1. Encriptar y guardar en vault
         final encPath = await _crypto.encryptAndSave(
             file, asset.title ?? 'file_$i');
 
-        // 2. Guardar en BD
         await _db.insertPhoto({
           'folder_id': folderId,
           'original_name': asset.title ?? 'file_$i',
@@ -106,7 +104,6 @@ class MediaService {
           'date_added': DateTime.now().millisecondsSinceEpoch,
         });
 
-        // 3. Eliminar de la galería del sistema
         await PhotoManager.editor.deleteWithIds([asset.id]);
       } catch (e) {
         debugPrint('Error importando archivo $i: $e');
@@ -118,7 +115,7 @@ class MediaService {
     await PhotoManager.clearFileCache();
   }
 
-  // ── .nomedia para ocultar vault ──────────────────────────
+  // ── Nomedia ──────────────────────────────────────────────
   Future<void> _ensureNomedia() async {
     final dir = await _getVaultDir();
     final nomedia = File(p.join(dir.path, '.nomedia'));
@@ -143,9 +140,20 @@ class MediaService {
     }
   }
 
+  // ── Eliminar archivo encriptado del vault ────────────────
+  Future<void> deleteEncryptedFile(String path) async {
+    try {
+      final f = File(path);
+      if (await f.exists()) await f.delete();
+    } catch (e) {
+      debugPrint('Error eliminando archivo: $e');
+    }
+  }
+
   // ── Eliminar foto del vault ──────────────────────────────
   Future<void> deletePhoto(Map<String, dynamic> photo) async {
-    await _crypto.deleteEncryptedFile(photo['encrypted_path']);
+    await _db.clearCoverIfDeleted(photo['encrypted_path']);
+    await deleteEncryptedFile(photo['encrypted_path']);
     await _db.deletePhoto(photo['id']);
   }
 
@@ -153,8 +161,7 @@ class MediaService {
   Future<void> deleteFolder(int folderId) async {
     final paths = await _db.getEncryptedPathsInFolder(folderId);
     for (final path in paths) {
-      final f = File(path);
-      if (await f.exists()) await f.delete();
+      await deleteEncryptedFile(path);
     }
     await _db.deleteFolder(folderId);
   }
@@ -163,11 +170,9 @@ class MediaService {
   Future<void> unlockPhotos(List<Map<String, dynamic>> photos) async {
     for (final photo in photos) {
       try {
-        // 1. Desencriptar bytes
         final bytes =
             await _crypto.decryptFile(photo['encrypted_path']);
 
-        // 2. Guardar en carpeta pública
         final dir = Directory('/storage/emulated/0/DCIM/Restored');
         if (!await dir.exists()) await dir.create(recursive: true);
 
@@ -176,14 +181,12 @@ class MediaService {
         final destFile = File('${dir.path}/$fileName');
         await destFile.writeAsBytes(bytes);
 
-        // 3. Notificar a la galería
         await PhotoManager.editor.saveImageWithPath(
           destFile.path,
           title: fileName,
         );
 
-        // 4. Eliminar del vault
-        await _crypto.deleteEncryptedFile(photo['encrypted_path']);
+        await deleteEncryptedFile(photo['encrypted_path']);
         await _db.deletePhoto(photo['id']);
       } catch (e) {
         debugPrint('Error desbloqueando archivo: $e');
@@ -192,30 +195,28 @@ class MediaService {
     await PhotoManager.clearFileCache();
   }
 
-  Future<Uint8List?> getVideoThumbnail(String encryptedPath, String originalName) async {
-  try {
-    // Desencriptar a archivo temporal
-    final bytes = await _crypto.decryptFile(encryptedPath);
-    final tempDir = await getTemporaryDirectory();
-    final tempPath = p.join(tempDir.path, 'thumb_$originalName');
-    final tempFile = File(tempPath);
-    await tempFile.writeAsBytes(bytes);
+  // ── Miniatura de video ───────────────────────────────────
+  Future<Uint8List?> getVideoThumbnail(
+      String encryptedPath, String originalName) async {
+    try {
+      final bytes = await _crypto.decryptFile(encryptedPath);
+      final tempDir = await getTemporaryDirectory();
+      final tempPath = p.join(tempDir.path, 'thumb_$originalName');
+      final tempFile = File(tempPath);
+      await tempFile.writeAsBytes(bytes);
 
-    // Generar miniatura
-    final thumbnail = await VideoThumbnail.thumbnailData(
-      video: tempFile.path,
-      imageFormat: ImageFormat.JPEG,
-      maxWidth: 300,
-      quality: 75,
-    );
+      final thumbnail = await VideoThumbnail.thumbnailData(
+        video: tempFile.path,
+        imageFormat: ImageFormat.JPEG,
+        maxWidth: 300,
+        quality: 75,
+      );
 
-    // Limpiar archivo temporal
-    await tempFile.delete().catchError((_) {});
-
-    return thumbnail;
-  } catch (e) {
-    debugPrint('Error generando miniatura: $e');
-    return null;
+      await tempFile.delete().catchError((_) {});
+      return thumbnail;
+    } catch (e) {
+      debugPrint('Error generando miniatura: $e');
+      return null;
+    }
   }
-}
 }

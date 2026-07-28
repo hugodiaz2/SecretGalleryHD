@@ -5,6 +5,7 @@ import '../../core/services/media_service.dart';
 class PhotoThumbnail extends StatefulWidget {
   final Map<String, dynamic> photo;
   final bool isSelected;
+  final bool showPreview; 
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -12,6 +13,7 @@ class PhotoThumbnail extends StatefulWidget {
     required Key key,
     required this.photo,
     this.isSelected = false,
+    this.showPreview = true,
     this.onTap,
     this.onLongPress,
   }) : super(key: key);
@@ -69,6 +71,17 @@ class _PhotoThumbnailState extends State<PhotoThumbnail> {
           // Thumbnail
           _loading
               ? const ColoredBox(color: Color(0xFF2A2A2A))
+              : !widget.showPreview // ← si está desactivado
+        ? ColoredBox(
+            color: const Color(0xFF2A2A2A),
+            child: Center(
+              child: Icon(
+                _isVideo ? Icons.videocam_rounded : Icons.photo_outlined,
+                color: Colors.white24,
+                size: 24,
+              ),
+            ),
+          )
               : _bytes != null
                   ? Image.memory(
                       _bytes!,

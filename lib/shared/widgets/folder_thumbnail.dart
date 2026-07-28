@@ -7,6 +7,7 @@ import '../../core/services/media_service.dart';
 class FolderThumbnail extends StatefulWidget {
   final Map<String, dynamic> folder;
   final bool isSelected;
+  final bool showPreview;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
   final void Function(Offset) onMenuTap;
@@ -16,6 +17,7 @@ class FolderThumbnail extends StatefulWidget {
     super.key,
     required this.folder,
     required this.isSelected,
+    this.showPreview = true,
     required this.onTap,
     required this.onLongPress,
     required this.onMenuTap,
@@ -46,17 +48,18 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
   }
 
   Future<void> _loadCover() async {
-    setState(() => _loading = true);
-    final path =
-        await DBHelper.instance.getCoverPhoto(widget.folder['id'] as int);
-    if (path != null) {
-      final bytes = await MediaService.instance.getPhotoBytes(path);
-      if (mounted) setState(() => _coverBytes = bytes);
-    } else {
-      if (mounted) setState(() => _coverBytes = null);
-    }
-    if (mounted) setState(() => _loading = false);
+  setState(() => _loading = true);
+  final path =
+      await DBHelper.instance.getCoverPhoto(widget.folder['id'] as int);
+  if (path != null) {
+    final bytes = await MediaService.instance.getPhotoBytes(path);
+    if (mounted) setState(() => _coverBytes = bytes);
+  } else {
+    // ✅ Limpiar bytes si no hay portada
+    if (mounted) setState(() => _coverBytes = null);
   }
+  if (mounted) setState(() => _loading = false);
+}
 
   @override
   Widget build(BuildContext context) {
@@ -88,6 +91,8 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
                   // Fondo / miniatura
                   _loading
                       ? Container(color: const Color(0xFF2A2A2A))
+                       : !widget.showPreview // ← si está desactivado
+        ? Container(color: const Color(0xFF2A2A2A))
                       : _coverBytes != null
                           ? Stack(
                               fit: StackFit.expand,

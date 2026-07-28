@@ -234,7 +234,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     builder: (_) => FolderTreeSheet(
       excludeFolderIds: [
         widget.folder['id'],
-        ..._selectedFolderIds.toList(),
+        ..._selectedFolderIds,
       ],
       currentFolderId: widget.folder['id'],
     ),
@@ -388,43 +388,57 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 }
 
   Future<void> _deleteSelectedPhotos() async {
-    final confirm = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
-        title: Text('Eliminar fotos',
-            style: GoogleFonts.poppins(color: Colors.white)),
-        content: Text(
-          '¿Eliminar ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'}?',
-          style: GoogleFonts.poppins(color: Colors.white70),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Eliminar',
-                style: GoogleFonts.poppins(color: Colors.redAccent)),
-          ),
-        ],
+  final noTrash = await PrefsService.instance.getNoTrash();
+
+  final confirm = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: const Color(0xFF1E1E1E),
+      title: Text('Eliminar fotos',
+          style: GoogleFonts.poppins(color: Colors.white)),
+      content: Text(
+        noTrash
+            ? '¿Eliminar ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'} permanentemente?'
+            : '¿Mover ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'} a la papelera?',
+        style: GoogleFonts.poppins(color: Colors.white70),
       ),
-    );
-    if (confirm != true) return;
-    final toDelete = _photos
-        .where((p) => _selectedPhotoIds.contains(p['id']))
-        .toList();
-    for (final p in toDelete) {
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, false),
+          child: Text('Cancelar',
+              style: GoogleFonts.poppins(color: Colors.white38)),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(ctx, true),
+          child: Text(
+            noTrash ? 'Eliminar' : 'Mover a papelera',
+            style: GoogleFonts.poppins(
+                color: noTrash ? Colors.redAccent : Colors.orange),
+          ),
+        ),
+      ],
+    ),
+  );
+  if (confirm != true) return;
+
+  final toDelete = _photos
+      .where((p) => _selectedPhotoIds.contains(p['id']))
+      .toList();
+
+  for (final p in toDelete) {
+    if (noTrash) {
       await _media.deletePhoto(p);
+    } else {
+      await _db.moveToTrash(p);
     }
-    setState(() {
-      _selectingPhotos = false;
-      _selectedPhotoIds.clear();
-    });
-    _load();
   }
+
+  setState(() {
+    _selectingPhotos = false;
+    _selectedPhotoIds.clear();
+  });
+  _load();
+}
 
   // ── HELPERS ──────────────────────────────────────────────
 
@@ -727,7 +741,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         crossAxisCount: _crossAxisCount,
         mainAxisSpacing: 2,
         crossAxisSpacing: 2,
-        childAspectRatio: 0.95,
+        childAspectRatio: 0.72,
       ),
       itemCount: allItems.length,
       itemBuilder: (_, i) {

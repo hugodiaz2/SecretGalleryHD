@@ -12,7 +12,7 @@ class DBHelper {
   }
 
   Future<Database> _initDB() async {
-    final path = join(await getDatabasesPath(), 'secret_gallery_v2.db');
+    final path = join(await getDatabasesPath(), 'secret_gallery_v3.db');
     return await openDatabase(path, version: 1, onCreate: _onCreate);
   }
 
@@ -39,6 +39,19 @@ class DBHelper {
         date_added INTEGER NOT NULL
       )
     ''');
+
+    await db.execute('''
+  CREATE TABLE trash (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    original_id INTEGER,
+    folder_id INTEGER,
+    original_name TEXT,
+    encrypted_path TEXT NOT NULL,
+    original_path TEXT,
+    deleted_at INTEGER NOT NULL,
+    type TEXT DEFAULT 'photo'
+  )
+''');
   }
 
   // ══════════════════════════════════════════
@@ -256,4 +269,81 @@ class DBHelper {
       orderBy: 'date_added DESC',
     );
   }
+
+  Future<int> moveToTrash(Map<String, dynamic> photo) async {
+  final db = await database;
+  final now = DateTime.now().millisecondsSinceEpoch;
+
+  // Limpiar portada si esta foto era portada de alguna carpeta
+  await db.update(
+    'folders',
+    {'cover_photo_path': null},
+    where: 'cover_photo_path = ?',
+    whereArgs: [photo['encrypted_path']],
+  );
+
+  final id = await db.insert('trash', {
+    'original_id': photo['id'],
+    'folder_id': photo['folder_id'],
+    'original_name': photo['original_name'],
+    'encrypted_path': photo['encrypted_path'],
+    'original_path': photo['original_path'],
+    'deleted_at': now,
+    'type': _getFileType(photo['original_name'] ?? ''),
+  });
+  await db.delete('photos',
+      where: 'id = ?', whereArgs: [photo['id']]);
+  return id;
+}
+
+String _getFileType(String name) {
+  final ext = name.split('.').last.toLowerCase();
+  if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext)) {
+    return 'video';
+  }
+  return 'photo';
+}
+
+Future<List<Map<String, dynamic>>> getTrashItems() async {
+  final db = await database;
+  return await db.query('trash', orderBy: 'deleted_at DESC');
+}
+
+Future<int> getTrashCount() async {
+  final db = await database;
+  final r = await db.rawQuery('SELECT COUNT(*) as c FROM trash');
+  return (r.first['c'] as int?) ?? 0;
+}
+
+Future<void> restoreFromTrash(Map<String, dynamic> item) async {
+  final db = await database;
+  await db.insert('photos', {
+    'folder_id': item['folder_id'],
+    'original_name': item['original_name'],
+    'encrypted_path': item['encrypted_path'],
+    'original_path': item['original_path'],
+    'date_added': DateTime.now().millisecondsSinceEpoch,
+  });
+  await db.delete('trash', where: 'id = ?', whereArgs: [item['id']]);
+}
+
+Future<void> deleteFromTrash(int id) async {
+  final db = await database;
+  await db.delete('trash', where: 'id = ?', whereArgs: [id]);
+}
+
+Future<void> emptyTrash() async {
+  final db = await database;
+  await db.delete('trash');
+}
+
+Future<void> clearCoverIfDeleted(String encryptedPath) async {
+  final db = await database;
+  await db.update(
+    'folders',
+    {'cover_photo_path': null},
+    where: 'cover_photo_path = ?',
+    whereArgs: [encryptedPath],
+  );
+}
 }

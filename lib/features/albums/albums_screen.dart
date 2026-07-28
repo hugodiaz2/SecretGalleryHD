@@ -7,8 +7,9 @@ import '../../core/services/prefs_service.dart';
 import '../../shared/widgets/folder_tree_sheet.dart';
 import '../../shared/widgets/photo_thumbnail.dart';
 import '../../shared/widgets/unlock_helper.dart';
-import '../../shared/widgets/view_selector_sheet.dart';
 import '../../shared/widgets/folder_thumbnail.dart';
+import '../../shared/widgets/design_sheet.dart';
+import '../settings/settings_screen.dart';
 import '../photos/photo_viewer_screen.dart';
 import '../photos/video_player_screen.dart';
 import 'folder_detail_screen.dart';
@@ -24,11 +25,13 @@ class AlbumsScreen extends StatefulWidget {
 
 class _AlbumsScreenState extends State<AlbumsScreen> {
   final _db = DBHelper.instance;
+  final _media = MediaService.instance; // ✅ AGREGADO
   List<Map<String, dynamic>> _folders = [];
   List<Map<String, dynamic>> _photos = [];
   String _search = '';
   bool _showSearch = false;
   GridViewType _viewType = GridViewType.grid3;
+  String _currentSort = 'newest';
   final _searchCtrl = TextEditingController();
 
   bool _selectingFolders = false;
@@ -38,6 +41,10 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   final Set<int> _selectedPhotoIds = {};
 
   bool get _isSelecting => _selectingFolders || _selectingPhotos;
+
+  bool _narrowBorders = false;
+  bool _showPhotoPreview = true;
+  bool _showFolderPreview = true;
 
   @override
   void initState() {
@@ -53,8 +60,21 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   }
 
   Future<void> _loadPrefs() async {
-    final type = await PrefsService.instance.getGridType();
-    setState(() => _viewType = type);
+    final gridType = await PrefsService.instance.getGridType();
+    final sort = await PrefsService.instance.getSort();
+    final narrowBorders = await PrefsService.instance.getNarrowBorders();
+    final showPhotoPreview =
+        await PrefsService.instance.getShowPhotoPreview();
+    final showFolderPreview =
+        await PrefsService.instance.getShowFolderPreview();
+    setState(() {
+      _viewType = gridType;
+      _currentSort = sort;
+      _narrowBorders = narrowBorders;
+      _showPhotoPreview = showPhotoPreview;
+      _showFolderPreview = showFolderPreview;
+    });
+    _applySort(_currentSort);
   }
 
   Future<void> _load() async {
@@ -199,7 +219,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       ),
     );
     if (confirm == true) {
-      await MediaService.instance.deleteFolder(folder['id']);
+      await _media.deleteFolder(folder['id']);
       _load();
     }
   }
@@ -254,7 +274,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     );
     if (confirm != true) return;
     for (final id in _selectedFolderIds) {
-      await MediaService.instance.deleteFolder(id);
+      await _media.deleteFolder(id);
     }
     setState(() {
       _selectingFolders = false;
@@ -280,6 +300,8 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   }
 
   Future<void> _deleteSelectedPhotos() async {
+    final noTrash = await PrefsService.instance.getNoTrash();
+
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -287,7 +309,9 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         title: Text('Eliminar fotos',
             style: GoogleFonts.poppins(color: Colors.white)),
         content: Text(
-          '¿Eliminar ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'}?',
+          noTrash
+              ? '¿Eliminar ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'} permanentemente?'
+              : '¿Mover ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'} a la papelera?',
           style: GoogleFonts.poppins(color: Colors.white70),
         ),
         actions: [
@@ -298,19 +322,29 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Eliminar',
-                style: GoogleFonts.poppins(color: Colors.redAccent)),
+            child: Text(
+              noTrash ? 'Eliminar' : 'Mover a papelera',
+              style: GoogleFonts.poppins(
+                  color: noTrash ? Colors.redAccent : Colors.orange),
+            ),
           ),
         ],
       ),
     );
     if (confirm != true) return;
+
     final toDelete = _photos
         .where((p) => _selectedPhotoIds.contains(p['id']))
         .toList();
+
     for (final p in toDelete) {
-      await MediaService.instance.deletePhoto(p);
+      if (noTrash) {
+        await _media.deletePhoto(p);
+      } else {
+        await _db.moveToTrash(p);
+      }
     }
+
     setState(() {
       _selectingPhotos = false;
       _selectedPhotoIds.clear();
@@ -341,59 +375,59 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   }
 
   void _showFolderMenu(Map<String, dynamic> folder, Offset offset) async {
-  final selected = await showMenu<String>(
-    context: context,
-    position: RelativeRect.fromLTRB(
-        offset.dx, offset.dy, offset.dx + 1, offset.dy + 1),
-    color: const Color(0xFF2A2A2A),
-    items: [
-      PopupMenuItem(
-        value: 'cover',
-        child: Row(children: [
-          const Icon(Icons.image_outlined,
-              color: Colors.white70, size: 18),
-          const SizedBox(width: 10),
-          Text('Elegir portada',
-              style: GoogleFonts.poppins(
-                  color: Colors.white, fontSize: 13)),
-        ]),
-      ),
-      PopupMenuItem(
-        value: 'rename',
-        child: Row(children: [
-          const Icon(Icons.drive_file_rename_outline,
-              color: Colors.white70, size: 18),
-          const SizedBox(width: 10),
-          Text('Renombrar',
-              style: GoogleFonts.poppins(
-                  color: Colors.white, fontSize: 13)),
-        ]),
-      ),
-      PopupMenuItem(
-        value: 'delete',
-        child: Row(children: [
-          const Icon(Icons.delete_outline,
-              color: Colors.redAccent, size: 18),
-          const SizedBox(width: 10),
-          Text('Eliminar',
-              style: GoogleFonts.poppins(
-                  color: Colors.redAccent, fontSize: 13)),
-        ]),
-      ),
-    ],
-  );
-  if (selected == 'cover') {
-    final changed = await showModalBottomSheet<bool>(
+    final selected = await showMenu<String>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => CoverPickerSheet(folderId: folder['id']),
+      position: RelativeRect.fromLTRB(
+          offset.dx, offset.dy, offset.dx + 1, offset.dy + 1),
+      color: const Color(0xFF2A2A2A),
+      items: [
+        PopupMenuItem(
+          value: 'cover',
+          child: Row(children: [
+            const Icon(Icons.image_outlined,
+                color: Colors.white70, size: 18),
+            const SizedBox(width: 10),
+            Text('Elegir portada',
+                style: GoogleFonts.poppins(
+                    color: Colors.white, fontSize: 13)),
+          ]),
+        ),
+        PopupMenuItem(
+          value: 'rename',
+          child: Row(children: [
+            const Icon(Icons.drive_file_rename_outline,
+                color: Colors.white70, size: 18),
+            const SizedBox(width: 10),
+            Text('Renombrar',
+                style: GoogleFonts.poppins(
+                    color: Colors.white, fontSize: 13)),
+          ]),
+        ),
+        PopupMenuItem(
+          value: 'delete',
+          child: Row(children: [
+            const Icon(Icons.delete_outline,
+                color: Colors.redAccent, size: 18),
+            const SizedBox(width: 10),
+            Text('Eliminar',
+                style: GoogleFonts.poppins(
+                    color: Colors.redAccent, fontSize: 13)),
+          ]),
+        ),
+      ],
     );
-    if (changed == true) _load();
+    if (selected == 'cover') {
+      final changed = await showModalBottomSheet<bool>(
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: Colors.transparent,
+        builder: (_) => CoverPickerSheet(folderId: folder['id']),
+      );
+      if (changed == true) _load();
+    }
+    if (selected == 'rename') _renameFolder(folder);
+    if (selected == 'delete') _deleteFolder(folder);
   }
-  if (selected == 'rename') _renameFolder(folder);
-  if (selected == 'delete') _deleteFolder(folder);
-}
 
   void _applySort(String v) {
     setState(() {
@@ -413,6 +447,34 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     });
   }
 
+  void _showDesignSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (_) => DesignSheet(
+        currentViewType: _viewType,
+        currentSort: _currentSort,
+        currentNarrowBorders: _narrowBorders,
+        currentShowPhotoPreview: _showPhotoPreview,
+        currentShowFolderPreview: _showFolderPreview,
+        onViewChanged: (type) async {
+          await PrefsService.instance.saveGridType(type);
+          setState(() => _viewType = type);
+        },
+        onSortChanged: (sort) async {
+          await PrefsService.instance.saveSort(sort);
+          setState(() => _currentSort = sort);
+          _applySort(sort);
+        },
+        onNarrowBordersChanged: (v) => setState(() => _narrowBorders = v),
+        onPhotoPreviewChanged: (v) => setState(() => _showPhotoPreview = v),
+        onFolderPreviewChanged: (v) =>
+            setState(() => _showFolderPreview = v),
+      ),
+    );
+  }
+
   int get _crossAxisCount {
     switch (_viewType) {
       case GridViewType.grid3: return 3;
@@ -423,15 +485,25 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     }
   }
 
+  bool _isVideo(Map<String, dynamic> photo) {
+    final name = (photo['original_name'] ?? '') as String;
+    final ext = name.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv']
+        .contains(ext);
+  }
+
   Widget _buildGridView() {
+    final spacing = _narrowBorders ? 1.0 : 2.0;
+    final padding = _narrowBorders ? 1.0 : 2.0;
+
     return GridView.builder(
-       padding: const EdgeInsets.fromLTRB(2, 2, 2, 100),
-    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-      crossAxisCount: _crossAxisCount,
-      mainAxisSpacing: 2,
-      crossAxisSpacing: 2,
-      childAspectRatio: 0.95, // ← más cuadrado
-    ),
+      padding: EdgeInsets.fromLTRB(padding, padding, padding, 100),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: _crossAxisCount,
+        mainAxisSpacing: spacing,
+        crossAxisSpacing: spacing,
+        childAspectRatio: 0.72,
+      ),
       itemCount: _folders.length + _photos.length,
       itemBuilder: (ctx, i) {
         if (i < _folders.length) {
@@ -441,6 +513,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
             key: ValueKey('folder_$id'),
             folder: folder,
             isSelected: _selectedFolderIds.contains(id),
+            showPreview: _showFolderPreview,
             onTap: () {
               if (_selectingFolders) {
                 _toggleFolderSelect(id);
@@ -462,25 +535,44 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
             onMenuTap: (offset) => _showFolderMenu(folder, offset),
           );
         }
+
         final photo = _photos[i - _folders.length];
         final photoId = photo['id'] as int;
+
         return PhotoThumbnail(
           key: ValueKey(photo['encrypted_path']),
           photo: photo,
           isSelected: _selectedPhotoIds.contains(photoId),
+          showPreview: _showPhotoPreview,
           onTap: () {
             if (_selectingPhotos) {
               _togglePhotoSelect(photoId);
             } else {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => PhotoViewerScreen(
-                    photos: _photos,
-                    initialIndex: i - _folders.length,
+              if (_isVideo(photo)) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => VideoPlayerScreen(video: photo),
                   ),
-                ),
-              ).then((_) => _load());
+                );
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PhotoViewerScreen(
+                      photos: _photos
+                          .where((p) => !_isVideo(p))
+                          .toList(),
+                      initialIndex: _photos
+                          .where((p) => !_isVideo(p))
+                          .toList()
+                          .indexWhere((p) =>
+                              p['encrypted_path'] ==
+                              photo['encrypted_path']),
+                    ),
+                  ),
+                ).then((_) => _load());
+              }
             }
           },
           onLongPress: () {
@@ -537,8 +629,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
             leading: Stack(
               children: [
                 Container(
-                  width: 48,
-                  height: 48,
+                  width: 48, height: 48,
                   decoration: BoxDecoration(
                     color: const Color(0xFF2A2A2A),
                     borderRadius: BorderRadius.circular(8),
@@ -562,13 +653,11 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                   ),
               ],
             ),
-            title: Text(
-              folder['name'] as String,
-              style: GoogleFonts.poppins(
-                  color: Colors.white,
-                  fontSize: 13,
-                  fontWeight: FontWeight.w500),
-            ),
+            title: Text(folder['name'] as String,
+                style: GoogleFonts.poppins(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500)),
             subtitle: Text(
               '$count foto${count == 1 ? '' : 's'}${subs > 0 ? ' · $subs subcarpeta${subs == 1 ? '' : 's'}' : ''}',
               style: GoogleFonts.poppins(
@@ -595,15 +684,31 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
             if (_selectingPhotos) {
               _togglePhotoSelect(photoId);
             } else {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => PhotoViewerScreen(
-                    photos: _photos,
-                    initialIndex: i - _folders.length,
+              if (_isVideo(photo)) {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => VideoPlayerScreen(video: photo),
                   ),
-                ),
-              ).then((_) => _load());
+                );
+              } else {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => PhotoViewerScreen(
+                      photos: _photos
+                          .where((p) => !_isVideo(p))
+                          .toList(),
+                      initialIndex: _photos
+                          .where((p) => !_isVideo(p))
+                          .toList()
+                          .indexWhere((p) =>
+                              p['encrypted_path'] ==
+                              photo['encrypted_path']),
+                    ),
+                  ),
+                ).then((_) => _load());
+              }
             }
           },
           onLongPress: () {
@@ -630,15 +735,14 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
           ),
           title: Text(
             photo['original_name'] ?? 'Foto',
-            style: GoogleFonts.poppins(
-                color: Colors.white, fontSize: 13),
+            style: GoogleFonts.poppins(color: Colors.white, fontSize: 13),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           subtitle: Text(
             _formatDate(photo['date_added'] as int),
-            style: GoogleFonts.poppins(
-                color: Colors.white38, fontSize: 11),
+            style:
+                GoogleFonts.poppins(color: Colors.white38, fontSize: 11),
           ),
         );
       },
@@ -699,7 +803,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                       autofocus: true,
                       style: const TextStyle(color: Colors.white),
                       decoration: const InputDecoration(
-                        hintText: 'Buscar carpeta...',
+                        hintText: 'Buscar...',
                         hintStyle: TextStyle(color: Colors.white38),
                         border: InputBorder.none,
                       ),
@@ -710,19 +814,16 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                     )
                   : const SizedBox.shrink(),
           actions: [
-            // ── Selección de carpetas ──
             if (_selectingFolders) ...[
               IconButton(
                 icon: const Icon(Icons.drive_file_move_outline,
                     color: Colors.white),
-                tooltip: 'Mover',
                 onPressed: _selectedFolderIds.isEmpty
                     ? null
                     : _moveSelectedFolders,
               ),
               IconButton(
                 icon: const Icon(Icons.select_all, color: Colors.white),
-                tooltip: 'Seleccionar todas',
                 onPressed: () => setState(() => _selectedFolderIds
                     .addAll(_folders.map((f) => f['id'] as int))),
               ),
@@ -733,13 +834,10 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                     ? null
                     : _deleteSelectedFolders,
               ),
-            ]
-            // ── Selección de fotos ──
-            else if (_selectingPhotos) ...[
+            ] else if (_selectingPhotos) ...[
               IconButton(
                 icon: const Icon(Icons.drive_file_move_outline,
                     color: Colors.white),
-                tooltip: 'Mover fotos',
                 onPressed: _selectedPhotoIds.isEmpty
                     ? null
                     : _moveSelectedPhotos,
@@ -747,7 +845,6 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
               IconButton(
                 icon: const Icon(Icons.lock_open_outlined,
                     color: Colors.blue),
-                tooltip: 'Desbloquear',
                 onPressed: _selectedPhotoIds.isEmpty
                     ? null
                     : () async {
@@ -767,7 +864,6 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
               ),
               IconButton(
                 icon: const Icon(Icons.select_all, color: Colors.white),
-                tooltip: 'Seleccionar todas',
                 onPressed: () => setState(() => _selectedPhotoIds
                     .addAll(_photos.map((p) => p['id'] as int))),
               ),
@@ -778,14 +874,11 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                     ? null
                     : _deleteSelectedPhotos,
               ),
-            ]
-            // ── Modo normal ──
-            else ...[
+            ] else ...[
               IconButton(
                 icon: Icon(
                     _showSearch ? Icons.close : Icons.search,
                     color: Colors.white),
-                tooltip: 'Buscar',
                 onPressed: () {
                   setState(() {
                     _showSearch = !_showSearch;
@@ -797,48 +890,19 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                   });
                 },
               ),
-              PopupMenuButton<String>(
-                icon: const Icon(Icons.sort, color: Colors.white),
-                color: const Color(0xFF2A2A2A),
-                tooltip: 'Ordenar',
-                onSelected: _applySort,
-                itemBuilder: (_) => [
-                  PopupMenuItem(
-                      value: 'az',
-                      child: Text('A → Z',
-                          style: GoogleFonts.poppins(
-                              color: Colors.white, fontSize: 13))),
-                  PopupMenuItem(
-                      value: 'za',
-                      child: Text('Z → A',
-                          style: GoogleFonts.poppins(
-                              color: Colors.white, fontSize: 13))),
-                  PopupMenuItem(
-                      value: 'newest',
-                      child: Text('Más recientes',
-                          style: GoogleFonts.poppins(
-                              color: Colors.white, fontSize: 13))),
-                  PopupMenuItem(
-                      value: 'oldest',
-                      child: Text('Más antiguos',
-                          style: GoogleFonts.poppins(
-                              color: Colors.white, fontSize: 13))),
-                ],
-              ),
-              // ✅ BOTÓN DE VISTA
               IconButton(
-                icon: const Icon(Icons.grid_view, color: Colors.white),
-                tooltip: 'Cambiar vista',
+                icon: const Icon(Icons.tune, color: Colors.white),
+                tooltip: 'Diseño',
+                onPressed: _showDesignSheet,
+              ),
+              IconButton(
+                icon: const Icon(Icons.settings, color: Colors.white),
+                tooltip: 'Configuración',
                 onPressed: () {
-                  showDialog(
-                    context: context,
-                     barrierColor: Colors.black54,
-                    builder: (_) => ViewSelectorSheet(
-                      current: _viewType,
-                      onSelected: (type) async {
-                        await PrefsService.instance.saveGridType(type);
-                        setState(() => _viewType = type);
-                      },
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const SettingsScreen(),
                     ),
                   );
                 },
@@ -887,8 +951,10 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                     },
                     backgroundColor: const Color(0xFF1565C0),
                     mini: true,
-                    child: const Icon(Icons.add_photo_alternate_outlined,
-                        color: Colors.white, size: 20),
+                    child: const Icon(
+                        Icons.add_photo_alternate_outlined,
+                        color: Colors.white,
+                        size: 20),
                   ),
                   const SizedBox(height: 10),
                   FloatingActionButton(
@@ -905,7 +971,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   }
 }
 
-// ── Widget miniatura en lista ────────────────────────────────
+// ── Miniatura en lista ───────────────────────────────────────
 class _ListPhotoThumb extends StatefulWidget {
   final Map<String, dynamic> photo;
   const _ListPhotoThumb({required this.photo});
@@ -930,8 +996,7 @@ class _ListPhotoThumbState extends State<_ListPhotoThumb> {
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 48,
-      height: 48,
+      width: 48, height: 48,
       decoration: BoxDecoration(
         color: const Color(0xFF2A2A2A),
         borderRadius: BorderRadius.circular(8),
@@ -944,7 +1009,6 @@ class _ListPhotoThumbState extends State<_ListPhotoThumb> {
   }
 }
 
-// ── Tile de carpeta (fallback si no hay FolderThumbnail) ─────
 class _TriangleBadge extends CustomPainter {
   final String count;
   _TriangleBadge(this.count);
