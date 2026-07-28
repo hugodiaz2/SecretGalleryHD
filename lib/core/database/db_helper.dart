@@ -317,8 +317,18 @@ Future<int> getTrashCount() async {
 
 Future<void> restoreFromTrash(Map<String, dynamic> item) async {
   final db = await database;
+  // Verificar si la carpeta destino aún existe
+  int folderId = item['folder_id'] as int? ?? 0;
+  if (folderId != 0) {
+    final folder = await db.query('folders',
+        where: 'id = ?', whereArgs: [folderId], limit: 1);
+    if (folder.isEmpty) {
+      folderId = 0; // Si la carpeta ya no existe, restaurar a principal
+    }
+  }
+
   await db.insert('photos', {
-    'folder_id': item['folder_id'],
+    'folder_id': folderId,
     'original_name': item['original_name'],
     'encrypted_path': item['encrypted_path'],
     'original_path': item['original_path'],

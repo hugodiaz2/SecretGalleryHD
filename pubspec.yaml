@@ -38,7 +38,15 @@ dependencies:
   video_player: ^2.8.6
   video_thumbnail: ^0.5.3
   chewie: ^1.8.5
+  flutter_windowmanager: ^0.2.0
+  sensors_plus: ^7.1.0
+  screen_brightness: ^2.1.11
 
+wakelock_plus: ^1.2.8
+sensors_plus: ^4.0.2
+flutter_windowmanager: ^0.2.0
+
+screen_brightness: ^0.2.2+1
 
 dev_dependencies:
   flutter_test:

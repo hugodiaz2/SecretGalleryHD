@@ -446,35 +446,40 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       }
     });
   }
-
-  void _showDesignSheet() {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => DesignSheet(
-        currentViewType: _viewType,
-        currentSort: _currentSort,
-        currentNarrowBorders: _narrowBorders,
-        currentShowPhotoPreview: _showPhotoPreview,
-        currentShowFolderPreview: _showFolderPreview,
-        onViewChanged: (type) async {
-          await PrefsService.instance.saveGridType(type);
-          setState(() => _viewType = type);
-        },
-        onSortChanged: (sort) async {
-          await PrefsService.instance.saveSort(sort);
-          setState(() => _currentSort = sort);
-          _applySort(sort);
-        },
-        onNarrowBordersChanged: (v) => setState(() => _narrowBorders = v),
-        onPhotoPreviewChanged: (v) => setState(() => _showPhotoPreview = v),
-        onFolderPreviewChanged: (v) =>
-            setState(() => _showFolderPreview = v),
-      ),
-    );
-  }
-
+void _showDesignSheet() {
+  showModalBottomSheet(
+    context: context,
+    backgroundColor: Colors.transparent,
+    isScrollControlled: true,
+    builder: (_) => DesignSheet(
+      currentViewType: _viewType,
+      currentSort: 'newest',
+      currentNarrowBorders: _narrowBorders,
+      currentShowPhotoPreview: _showPhotoPreview,
+      currentShowFolderPreview: _showFolderPreview,
+      onViewChanged: (type) async {
+        await PrefsService.instance.saveGridType(type);
+        setState(() => _viewType = type);
+      },
+      onSortChanged: (sort) async {
+        await PrefsService.instance.saveSort(sort);
+        _applySort(sort);
+      },
+      onNarrowBordersChanged: (v) {
+        PrefsService.instance.saveNarrowBorders(v);
+        setState(() => _narrowBorders = v);
+      },
+      onPhotoPreviewChanged: (v) {
+        PrefsService.instance.saveShowPhotoPreview(v);
+        setState(() => _showPhotoPreview = v);
+      },
+      onFolderPreviewChanged: (v) {
+        PrefsService.instance.saveShowFolderPreview(v);
+        setState(() => _showFolderPreview = v);
+      },
+    ),
+  );
+}
   int get _crossAxisCount {
     switch (_viewType) {
       case GridViewType.grid3: return 3;
@@ -521,7 +526,8 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => FolderDetailScreen(folder: folder),
+                    builder: (_) => FolderDetailScreen(folder: folder,showPhotoPreview: _showPhotoPreview,
+      showFolderPreview: _showFolderPreview,),
                   ),
                 ).then((_) => _load());
               }

@@ -4,6 +4,9 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
 import '../../core/security/pin_service.dart';
 import '../../core/services/prefs_service.dart';
+import 'package:flutter_windowmanager/flutter_windowmanager.dart';
+import 'package:screen_brightness/screen_brightness.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../trash/trash_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
@@ -89,17 +92,34 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _intruderSelfie = value);
         break;
       case 'preventScreenshot':
-        await PrefsService.instance.savePreventScreenshot(value);
-        setState(() => _preventScreenshot = value);
-        break;
+  await PrefsService.instance.savePreventScreenshot(value);
+  if (value) {
+    await FlutterWindowManager.addFlags(
+        FlutterWindowManager.FLAG_SECURE);
+  } else {
+    await FlutterWindowManager.clearFlags(
+        FlutterWindowManager.FLAG_SECURE);
+  }
+  setState(() => _preventScreenshot = value);
+  break;
       case 'keepScreenOn':
-        await PrefsService.instance.saveKeepScreenOn(value);
-        setState(() => _keepScreenOn = value);
-        break;
+  await PrefsService.instance.saveKeepScreenOn(value);
+  if (value) {
+    await WakelockPlus.enable();
+  } else {
+    await WakelockPlus.disable();
+  }
+  setState(() => _keepScreenOn = value);
+  break;
       case 'maxBrightness':
-        await PrefsService.instance.saveMaxBrightness(value);
-        setState(() => _maximizeBrightness = value);
-        break;
+  await PrefsService.instance.saveMaxBrightness(value);
+  if (value) {
+    await ScreenBrightness().setScreenBrightness(1.0);
+  } else {
+    await ScreenBrightness().resetScreenBrightness();
+  }
+  setState(() => _maximizeBrightness = value);
+  break;
       case 'maximizeImages':
         await PrefsService.instance.saveMaximizeImages(value);
         setState(() => _maximizeImages = value);
