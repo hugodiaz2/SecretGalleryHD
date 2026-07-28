@@ -7,12 +7,15 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'core/security/pin_service.dart';
 import 'core/services/prefs_service.dart';
+import 'core/services/theme_service.dart';
 import 'features/lock/pin_screen.dart';
 import 'features/albums/albums_screen.dart';
+import 'features/camouflage/calculator_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+  await ThemeService.instance.load();
   runApp(const SecretGalleryApp());
 }
 
@@ -21,18 +24,14 @@ class SecretGalleryApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Private Gallery HD',
-      debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: const Color(0xFF1A1A2E),
-          brightness: Brightness.dark,
-        ),
-        scaffoldBackgroundColor: const Color(0xFF0F0F1A),
-        useMaterial3: true,
+    return AnimatedBuilder(
+      animation: ThemeService.instance,
+      builder: (context, _) => MaterialApp(
+        title: 'Private Gallery HD',
+        debugShowCheckedModeBanner: false,
+        theme: ThemeService.instance.themeData,
+        home: const AppEntry(),
       ),
-      home: const AppEntry(),
     );
   }
 }
@@ -48,6 +47,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   final _pinService = PinService();
   bool _loading = true;
   bool _hasPin = false;
+  bool _camouflageMode = false;
   StreamSubscription? _shakeSubscription;
   DateTime? _lastShake;
 
@@ -133,8 +133,10 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
 
   Future<void> _check() async {
     final has = await _pinService.hasPin();
+    final camouflage = has && await PrefsService.instance.getCamouflageMode();
     setState(() {
       _hasPin = has;
+      _camouflageMode = camouflage;
       _loading = false;
     });
   }
@@ -148,6 +150,9 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
           child: CircularProgressIndicator(color: Colors.blue),
         ),
       );
+    }
+    if (_camouflageMode) {
+      return const CalculatorScreen();
     }
     return PinScreen(
       mode: _hasPin ? PinMode.unlock : PinMode.setup,

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/security/pin_service.dart';
+import '../../core/security/intruder_service.dart';
+import '../../core/services/prefs_service.dart';
 
 enum PinMode { setup, unlock }
 
@@ -23,6 +25,7 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
   String _subtitle = '';
   bool _isConfirming = false;
   bool _error = false;
+  int _failedAttempts = 0;
 
   late final AnimationController _shakeController;
   late final AnimationController _dotController;
@@ -108,16 +111,27 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
     setState(() => _entered.removeLast());
   }
 
+  void _triggerIntruderCapture() {
+    PrefsService.instance.getIntruderSelfie().then((enabled) {
+      if (enabled) IntruderService.instance.captureSilently();
+    });
+  }
+
   Future<void> _onComplete() async {
     final pin = _entered.join();
 
     if (widget.mode == PinMode.unlock) {
       final ok = await _pinService.validatePin(pin);
       if (ok) {
+        _failedAttempts = 0;
         HapticFeedback.heavyImpact();
         if (mounted) widget.onSuccess();
       } else {
         HapticFeedback.heavyImpact();
+        _failedAttempts++;
+        if (_failedAttempts >= 3 && _failedAttempts % 3 == 0) {
+          _triggerIntruderCapture();
+        }
         if (!mounted) return;
         setState(() {
           _error = true;

@@ -4,6 +4,7 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
 import '../../core/services/media_service.dart';
 import '../../core/services/prefs_service.dart';
+import '../../core/theme/app_colors.dart';
 
 class TrashScreen extends StatefulWidget {
   const TrashScreen({super.key});
@@ -67,13 +68,13 @@ class _TrashScreenState extends State<TrashScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          backgroundColor: const Color(0xFF1E1E1E),
+          backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
           content: Row(children: [
             const Icon(Icons.restore, color: Colors.green, size: 18),
             const SizedBox(width: 8),
             Text(
               '${toRestore.length} archivo${toRestore.length == 1 ? '' : 's'} restaurado${toRestore.length == 1 ? '' : 's'}',
-              style: GoogleFonts.poppins(color: Colors.white),
+              style: GoogleFonts.poppins(color: context.colors.textPrimary),
             ),
           ]),
         ),
@@ -85,18 +86,18 @@ class _TrashScreenState extends State<TrashScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
         title: Text('Eliminar permanentemente',
-            style: GoogleFonts.poppins(color: Colors.white)),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: Text(
           '¿Eliminar ${_selectedIds.length} archivo${_selectedIds.length == 1 ? '' : 's'} permanentemente? Esta acción no se puede deshacer.',
-          style: GoogleFonts.poppins(color: Colors.white70),
+          style: GoogleFonts.poppins(color: context.colors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
+                style: GoogleFonts.poppins(color: context.colors.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -127,18 +128,18 @@ class _TrashScreenState extends State<TrashScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
         title: Text('Vaciar papelera',
-            style: GoogleFonts.poppins(color: Colors.white)),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: Text(
           'Se eliminarán permanentemente todos los archivos de la papelera.',
-          style: GoogleFonts.poppins(color: Colors.white70),
+          style: GoogleFonts.poppins(color: context.colors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
+                style: GoogleFonts.poppins(color: context.colors.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -172,12 +173,12 @@ class _TrashScreenState extends State<TrashScreen> {
         return true;
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFF121212),
+        backgroundColor: context.colors.bg,
         appBar: AppBar(
-          backgroundColor: const Color(0xFF121212),
+          backgroundColor: context.colors.bg,
           elevation: 0,
           leading: IconButton(
-            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            icon: Icon(Icons.arrow_back, color: context.colors.textPrimary),
             onPressed: () {
               if (_selecting) {
                 setState(() {
@@ -194,7 +195,7 @@ class _TrashScreenState extends State<TrashScreen> {
                 ? '${_selectedIds.length} seleccionado${_selectedIds.length == 1 ? '' : 's'}'
                 : 'Papelera',
             style: GoogleFonts.poppins(
-                color: Colors.white, fontSize: 16),
+                color: context.colors.textPrimary, fontSize: 16),
           ),
           actions: [
             if (_selecting) ...[
@@ -205,7 +206,7 @@ class _TrashScreenState extends State<TrashScreen> {
                     _selectedIds.isEmpty ? null : _restoreSelected,
               ),
               IconButton(
-                icon: const Icon(Icons.select_all, color: Colors.white),
+                icon: Icon(Icons.select_all, color: context.colors.textPrimary),
                 onPressed: () => setState(() => _selectedIds
                     .addAll(_items.map((i) => i['id'] as int))),
               ),
@@ -230,13 +231,13 @@ class _TrashScreenState extends State<TrashScreen> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.delete_outline,
-                        size: 72, color: Colors.white12),
+                    Icon(Icons.delete_outline,
+                        size: 72, color: context.colors.textGhost),
                     const SizedBox(height: 16),
                     Text(
                       'La papelera está vacía',
                       style: GoogleFonts.poppins(
-                          color: Colors.white24, fontSize: 14),
+                          color: context.colors.textFaint, fontSize: 14),
                     ),
                   ],
                 ),
@@ -249,21 +250,21 @@ class _TrashScreenState extends State<TrashScreen> {
                     padding: const EdgeInsets.symmetric(
                         horizontal: 14, vertical: 10),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1A1A1A),
+                      color: context.colors.surface,
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(
-                          color: Colors.white12, width: 1),
+                          color: context.colors.textGhost, width: 1),
                     ),
                     child: Row(
                       children: [
-                        const Icon(Icons.info_outline,
-                            color: Colors.white38, size: 16),
+                        Icon(Icons.info_outline,
+                            color: context.colors.textMuted, size: 16),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             '${_items.length} archivo${_items.length == 1 ? '' : 's'} en papelera · Mantén presionado para seleccionar',
                             style: GoogleFonts.poppins(
-                                color: Colors.white38, fontSize: 11),
+                                color: context.colors.textMuted, fontSize: 11),
                           ),
                         ),
                       ],
@@ -317,16 +318,16 @@ class _TrashScreenState extends State<TrashScreen> {
                             children: [
                               _TrashThumb(item: item),
                               if (isVideo)
-                                const Center(
+                                Center(
                                   child: Icon(
                                     Icons.play_circle_outline,
-                                    color: Colors.white70,
+                                    color: context.colors.textSecondary,
                                     size: 28,
                                   ),
                                 ),
                               if (isSelected)
                                 Container(
-                                    color: Colors.blue.withOpacity(0.4)),
+                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.4)),
                               if (isSelected)
                                 Positioned(
                                   top: 4,
@@ -334,9 +335,9 @@ class _TrashScreenState extends State<TrashScreen> {
                                   child: Container(
                                     width: 20,
                                     height: 20,
-                                    decoration: const BoxDecoration(
+                                    decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: Colors.blue,
+                                      color: Theme.of(context).colorScheme.primary,
                                     ),
                                     child: const Icon(Icons.check,
                                         color: Colors.white, size: 13),
@@ -354,8 +355,8 @@ class _TrashScreenState extends State<TrashScreen> {
                                   child: Text(
                                     _formatDate(
                                         item['deleted_at'] as int),
-                                    style: const TextStyle(
-                                        color: Colors.white54,
+                                    style: TextStyle(
+                                        color: context.colors.textPrimary.withOpacity(0.54),
                                         fontSize: 8),
                                     textAlign: TextAlign.center,
                                   ),
@@ -376,7 +377,7 @@ class _TrashScreenState extends State<TrashScreen> {
   void _showItemOptions(Map<String, dynamic> item) {
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: context.colors.surface,
       shape: const RoundedRectangleBorder(
           borderRadius:
               BorderRadius.vertical(top: Radius.circular(20))),
@@ -388,19 +389,19 @@ class _TrashScreenState extends State<TrashScreen> {
               width: 40, height: 4,
               margin: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
-                  color: Colors.white24,
+                  color: context.colors.textFaint,
                   borderRadius: BorderRadius.circular(2)),
             ),
             Text(
               item['original_name'] ?? 'Archivo',
               style: GoogleFonts.poppins(
-                  color: Colors.white54, fontSize: 12),
+                  color: context.colors.textPrimary.withOpacity(0.54), fontSize: 12),
             ),
             const SizedBox(height: 8),
             ListTile(
               leading: const Icon(Icons.restore, color: Colors.green),
               title: Text('Restaurar',
-                  style: GoogleFonts.poppins(color: Colors.white)),
+                  style: GoogleFonts.poppins(color: context.colors.textPrimary)),
               onTap: () async {
                 Navigator.pop(context);
                 await _db.restoreFromTrash(item);
@@ -408,10 +409,10 @@ class _TrashScreenState extends State<TrashScreen> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      backgroundColor: const Color(0xFF1E1E1E),
+                      backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
                       content: Text('Archivo restaurado',
                           style:
-                              GoogleFonts.poppins(color: Colors.white)),
+                              GoogleFonts.poppins(color: context.colors.textPrimary)),
                     ),
                   );
                 }
@@ -470,10 +471,10 @@ class _TrashThumbState extends State<_TrashThumb> {
   Widget build(BuildContext context) {
     return _bytes != null
         ? Image.memory(_bytes!, fit: BoxFit.cover,
-            errorBuilder: (_, __, ___) => const ColoredBox(
-                color: Color(0xFF2A2A2A),
+            errorBuilder: (_, __, ___) => ColoredBox(
+                color: context.colors.surfaceHigh,
                 child: Icon(Icons.broken_image,
-                    color: Colors.white24, size: 24)))
-        : const ColoredBox(color: Color(0xFF2A2A2A));
+                    color: context.colors.textFaint, size: 24)))
+        : ColoredBox(color: context.colors.surfaceHigh);
   }
 }

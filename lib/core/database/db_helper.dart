@@ -13,7 +13,20 @@ class DBHelper {
 
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), 'secret_gallery_v3.db');
-    return await openDatabase(path, version: 1, onCreate: _onCreate);
+    return await openDatabase(path,
+        version: 2, onCreate: _onCreate, onUpgrade: _onUpgrade);
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS intruders (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          encrypted_path TEXT NOT NULL,
+          captured_at INTEGER NOT NULL
+        )
+      ''');
+    }
   }
 
   Future<void> _onCreate(Database db, int version) async {
@@ -52,6 +65,44 @@ class DBHelper {
     type TEXT DEFAULT 'photo'
   )
 ''');
+
+    await db.execute('''
+  CREATE TABLE intruders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    encrypted_path TEXT NOT NULL,
+    captured_at INTEGER NOT NULL
+  )
+''');
+  }
+
+  // ══════════════════════════════════════════
+  // INTRUSOS
+  // ══════════════════════════════════════════
+
+  Future<int> insertIntruder(Map<String, dynamic> data) async {
+    final db = await database;
+    return await db.insert('intruders', data);
+  }
+
+  Future<List<Map<String, dynamic>>> getIntruders() async {
+    final db = await database;
+    return await db.query('intruders', orderBy: 'captured_at DESC');
+  }
+
+  Future<int> getIntruderCount() async {
+    final db = await database;
+    final r = await db.rawQuery('SELECT COUNT(*) as c FROM intruders');
+    return (r.first['c'] as int?) ?? 0;
+  }
+
+  Future<void> deleteIntruder(int id) async {
+    final db = await database;
+    await db.delete('intruders', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> deleteAllIntruders() async {
+    final db = await database;
+    await db.delete('intruders');
   }
 
   // ══════════════════════════════════════════

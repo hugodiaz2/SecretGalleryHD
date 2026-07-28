@@ -45,5 +45,7 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSCameraUsageDescription</key>
+	<string>Se usa para tomar una foto de seguridad cuando se ingresa un PIN incorrecto varias veces.</string>
 </dict>
 </plist>

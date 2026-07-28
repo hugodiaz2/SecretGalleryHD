@@ -1,3 +1,4 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 enum GridViewType { grid3, grid4, grid5, grid6, list }
@@ -23,6 +24,8 @@ class PrefsService {
   static const _keyMaximizeImages = 'maximize_images';
   static const _keyNoTrash = 'no_trash';
   static const _keyDarkMode = 'dark_mode';
+  static const _keyAccentColor = 'accent_color';
+  static const _keyCamouflageMode = 'camouflage_mode';
 
   // ── Grid ────────────────────────────────────────────────
   Future<GridViewType> getGridType() async {
@@ -103,6 +106,21 @@ class PrefsService {
       _getBool(_keyDarkMode, defaultValue: true);
   Future<void> saveDarkMode(bool v) => _setBool(_keyDarkMode, v);
 
+  Future<Color> getAccentColor() async {
+    final val = await _storage.read(key: _keyAccentColor);
+    if (val == null) return const Color(0xFF1565C0);
+    return Color(int.parse(val));
+  }
+
+  Future<void> saveAccentColor(Color color) async {
+    await _storage.write(
+        key: _keyAccentColor, value: color.toARGB32().toString());
+  }
+
+  Future<bool> getCamouflageMode() => _getBool(_keyCamouflageMode);
+  Future<void> saveCamouflageMode(bool v) =>
+      _setBool(_keyCamouflageMode, v);
+
   // ── Cargar todos de una vez ──────────────────────────────
   Future<Map<String, dynamic>> loadAll() async {
     return {
@@ -120,6 +138,7 @@ class PrefsService {
       'maximizeImages': await getMaximizeImages(),
       'noTrash': await getNoTrash(),
       'darkMode': await getDarkMode(),
+      'camouflageMode': await getCamouflageMode(),
     };
   }
 }

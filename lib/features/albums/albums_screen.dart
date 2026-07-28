@@ -1,9 +1,11 @@
+import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
 import '../../core/services/media_service.dart';
 import '../../core/services/prefs_service.dart';
+import '../../core/theme/app_colors.dart';
 import '../../shared/widgets/folder_tree_sheet.dart';
 import '../../shared/widgets/photo_thumbnail.dart';
 import '../../shared/widgets/unlock_helper.dart';
@@ -94,6 +96,12 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       _folders = enriched;
       _photos = List<Map<String, dynamic>>.from(photos);
     });
+    if (_currentSort != 'newest') await _applySort(_currentSort);
+  }
+
+  Future<int> _fileSize(String path) async {
+    final f = File(path);
+    return await f.exists() ? await f.length() : 0;
   }
 
   Future<void> _createFolder() async {
@@ -101,23 +109,23 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
         title: Text('Nueva carpeta',
-            style: GoogleFonts.poppins(color: Colors.white)),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: context.colors.textPrimary),
           decoration: InputDecoration(
             hintText: 'Nombre de la carpeta',
-            hintStyle: const TextStyle(color: Colors.white38),
+            hintStyle: TextStyle(color: context.colors.textMuted),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
               borderSide: const BorderSide(color: Color(0xFF3D3D3D)),
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: Colors.blue),
+              borderSide: BorderSide(color: Theme.of(context).colorScheme.primary),
             ),
           ),
         ),
@@ -125,12 +133,12 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
+                style: GoogleFonts.poppins(color: context.colors.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: Text('Crear',
-                style: GoogleFonts.poppins(color: Colors.blue)),
+                style: GoogleFonts.poppins(color: Theme.of(context).colorScheme.primary)),
           ),
         ],
       ),
@@ -152,13 +160,13 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     final name = await showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
         title: Text('Renombrar',
-            style: GoogleFonts.poppins(color: Colors.white)),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          style: const TextStyle(color: Colors.white),
+          style: TextStyle(color: context.colors.textPrimary),
           decoration: InputDecoration(
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
@@ -166,7 +174,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
             ),
             focusedBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(8),
-              borderSide: const BorderSide(color: Colors.blue),
+              borderSide: BorderSide(color: Theme.of(context).colorScheme.primary),
             ),
           ),
         ),
@@ -174,12 +182,12 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
           TextButton(
             onPressed: () => Navigator.pop(ctx),
             child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
+                style: GoogleFonts.poppins(color: context.colors.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
             child: Text('Guardar',
-                style: GoogleFonts.poppins(color: Colors.blue)),
+                style: GoogleFonts.poppins(color: Theme.of(context).colorScheme.primary)),
           ),
         ],
       ),
@@ -197,18 +205,18 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
         title: Text('Eliminar carpeta',
-            style: GoogleFonts.poppins(color: Colors.white)),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: Text(
           '¿Eliminar "${folder['name']}" y todo su contenido?',
-          style: GoogleFonts.poppins(color: Colors.white70),
+          style: GoogleFonts.poppins(color: context.colors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
+                style: GoogleFonts.poppins(color: context.colors.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -251,18 +259,18 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
         title: Text('Eliminar carpetas',
-            style: GoogleFonts.poppins(color: Colors.white)),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: Text(
           '¿Eliminar ${_selectedFolderIds.length} carpeta${_selectedFolderIds.length == 1 ? '' : 's'} y todo su contenido?',
-          style: GoogleFonts.poppins(color: Colors.white70),
+          style: GoogleFonts.poppins(color: context.colors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
+                style: GoogleFonts.poppins(color: context.colors.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -305,20 +313,20 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        backgroundColor: const Color(0xFF1E1E1E),
+        backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
         title: Text('Eliminar fotos',
-            style: GoogleFonts.poppins(color: Colors.white)),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: Text(
           noTrash
               ? '¿Eliminar ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'} permanentemente?'
               : '¿Mover ${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'} a la papelera?',
-          style: GoogleFonts.poppins(color: Colors.white70),
+          style: GoogleFonts.poppins(color: context.colors.textSecondary),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
             child: Text('Cancelar',
-                style: GoogleFonts.poppins(color: Colors.white38)),
+                style: GoogleFonts.poppins(color: context.colors.textMuted)),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
@@ -379,28 +387,28 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       context: context,
       position: RelativeRect.fromLTRB(
           offset.dx, offset.dy, offset.dx + 1, offset.dy + 1),
-      color: const Color(0xFF2A2A2A),
+      color: context.colors.surfaceHigh,
       items: [
         PopupMenuItem(
           value: 'cover',
           child: Row(children: [
-            const Icon(Icons.image_outlined,
-                color: Colors.white70, size: 18),
+            Icon(Icons.image_outlined,
+                color: context.colors.textSecondary, size: 18),
             const SizedBox(width: 10),
             Text('Elegir portada',
                 style: GoogleFonts.poppins(
-                    color: Colors.white, fontSize: 13)),
+                    color: context.colors.textPrimary, fontSize: 13)),
           ]),
         ),
         PopupMenuItem(
           value: 'rename',
           child: Row(children: [
-            const Icon(Icons.drive_file_rename_outline,
-                color: Colors.white70, size: 18),
+            Icon(Icons.drive_file_rename_outline,
+                color: context.colors.textSecondary, size: 18),
             const SizedBox(width: 10),
             Text('Renombrar',
                 style: GoogleFonts.poppins(
-                    color: Colors.white, fontSize: 13)),
+                    color: context.colors.textPrimary, fontSize: 13)),
           ]),
         ),
         PopupMenuItem(
@@ -429,7 +437,34 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     if (selected == 'delete') _deleteFolder(folder);
   }
 
-  void _applySort(String v) {
+  Future<void> _applySort(String v) async {
+    _currentSort = v;
+
+    if (v == 'size_desc') {
+      final folderSizes = <int, int>{};
+      for (final f in _folders) {
+        final paths = await _db.getEncryptedPathsInFolder(f['id'] as int);
+        int total = 0;
+        for (final path in paths) {
+          total += await _fileSize(path);
+        }
+        folderSizes[f['id'] as int] = total;
+      }
+      final photoSizes = <String, int>{};
+      for (final p in _photos) {
+        photoSizes[p['encrypted_path'] as String] =
+            await _fileSize(p['encrypted_path'] as String);
+      }
+      if (!mounted) return;
+      setState(() {
+        _folders.sort((a, b) => (folderSizes[b['id']] ?? 0)
+            .compareTo(folderSizes[a['id']] ?? 0));
+        _photos.sort((a, b) => (photoSizes[b['encrypted_path']] ?? 0)
+            .compareTo(photoSizes[a['encrypted_path']] ?? 0));
+      });
+      return;
+    }
+
     setState(() {
       if (v == 'az') {
         _folders.sort((a, b) =>
@@ -453,7 +488,7 @@ void _showDesignSheet() {
     isScrollControlled: true,
     builder: (_) => DesignSheet(
       currentViewType: _viewType,
-      currentSort: 'newest',
+      currentSort: _currentSort,
       currentNarrowBorders: _narrowBorders,
       currentShowPhotoPreview: _showPhotoPreview,
       currentShowFolderPreview: _showFolderPreview,
@@ -612,7 +647,7 @@ void _showDesignSheet() {
 
           return ListTile(
             tileColor: isSelected
-                ? const Color(0xFF1A2A3A)
+                ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
                 : Colors.transparent,
             onTap: () {
               if (_selectingFolders) {
@@ -637,12 +672,12 @@ void _showDesignSheet() {
                 Container(
                   width: 48, height: 48,
                   decoration: BoxDecoration(
-                    color: const Color(0xFF2A2A2A),
+                    color: context.colors.surfaceHigh,
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Icon(
                     subs > 0 ? Icons.folder_copy : Icons.folder,
-                    color: const Color(0xFF1565C0),
+                    color: Theme.of(context).colorScheme.primary,
                     size: 28,
                   ),
                 ),
@@ -650,7 +685,7 @@ void _showDesignSheet() {
                   Positioned.fill(
                     child: Container(
                       decoration: BoxDecoration(
-                        color: Colors.blue.withOpacity(0.4),
+                        color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: const Icon(Icons.check,
@@ -661,19 +696,19 @@ void _showDesignSheet() {
             ),
             title: Text(folder['name'] as String,
                 style: GoogleFonts.poppins(
-                    color: Colors.white,
+                    color: context.colors.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w500)),
             subtitle: Text(
               '$count foto${count == 1 ? '' : 's'}${subs > 0 ? ' · $subs subcarpeta${subs == 1 ? '' : 's'}' : ''}',
               style: GoogleFonts.poppins(
-                  color: Colors.white38, fontSize: 11),
+                  color: context.colors.textMuted, fontSize: 11),
             ),
             trailing: GestureDetector(
               onTapDown: (d) =>
                   _showFolderMenu(folder, d.globalPosition),
-              child: const Icon(Icons.more_vert,
-                  color: Colors.white38, size: 20),
+              child: Icon(Icons.more_vert,
+                  color: context.colors.textMuted, size: 20),
             ),
           );
         }
@@ -684,7 +719,7 @@ void _showDesignSheet() {
 
         return ListTile(
           tileColor: isSelected
-              ? const Color(0xFF1A2A3A)
+              ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
               : Colors.transparent,
           onTap: () {
             if (_selectingPhotos) {
@@ -730,7 +765,7 @@ void _showDesignSheet() {
                 Positioned.fill(
                   child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.blue.withOpacity(0.4),
+                      color: Theme.of(context).colorScheme.primary.withOpacity(0.4),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: const Icon(Icons.check,
@@ -741,14 +776,14 @@ void _showDesignSheet() {
           ),
           title: Text(
             photo['original_name'] ?? 'Foto',
-            style: GoogleFonts.poppins(color: Colors.white, fontSize: 13),
+            style: GoogleFonts.poppins(color: context.colors.textPrimary, fontSize: 13),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),
           subtitle: Text(
             _formatDate(photo['date_added'] as int),
             style:
-                GoogleFonts.poppins(color: Colors.white38, fontSize: 11),
+                GoogleFonts.poppins(color: context.colors.textMuted, fontSize: 11),
           ),
         );
       },
@@ -776,13 +811,13 @@ void _showDesignSheet() {
         return true;
       },
       child: Scaffold(
-        backgroundColor: const Color(0xFF121212),
+        backgroundColor: context.colors.bg,
         appBar: AppBar(
-          backgroundColor: const Color(0xFF121212),
+          backgroundColor: context.colors.bg,
           elevation: 0,
           leading: _isSelecting
               ? IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white),
+                  icon: Icon(Icons.close, color: context.colors.textPrimary),
                   onPressed: () => setState(() {
                     _selectingFolders = false;
                     _selectingPhotos = false;
@@ -790,10 +825,10 @@ void _showDesignSheet() {
                     _selectedPhotoIds.clear();
                   }),
                 )
-              : const Padding(
+              : Padding(
                   padding: EdgeInsets.all(12),
                   child: Icon(Icons.lock_rounded,
-                      color: Colors.white, size: 26),
+                      color: context.colors.textPrimary, size: 26),
                 ),
           title: _isSelecting
               ? Text(
@@ -801,16 +836,16 @@ void _showDesignSheet() {
                       ? '${_selectedFolderIds.length} carpeta${_selectedFolderIds.length == 1 ? '' : 's'}'
                       : '${_selectedPhotoIds.length} foto${_selectedPhotoIds.length == 1 ? '' : 's'}',
                   style: GoogleFonts.poppins(
-                      color: Colors.white, fontSize: 16),
+                      color: context.colors.textPrimary, fontSize: 16),
                 )
               : _showSearch
                   ? TextField(
                       controller: _searchCtrl,
                       autofocus: true,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
+                      style: TextStyle(color: context.colors.textPrimary),
+                      decoration: InputDecoration(
                         hintText: 'Buscar...',
-                        hintStyle: TextStyle(color: Colors.white38),
+                        hintStyle: TextStyle(color: context.colors.textMuted),
                         border: InputBorder.none,
                       ),
                       onChanged: (v) {
@@ -822,14 +857,14 @@ void _showDesignSheet() {
           actions: [
             if (_selectingFolders) ...[
               IconButton(
-                icon: const Icon(Icons.drive_file_move_outline,
-                    color: Colors.white),
+                icon: Icon(Icons.drive_file_move_outline,
+                    color: context.colors.textPrimary),
                 onPressed: _selectedFolderIds.isEmpty
                     ? null
                     : _moveSelectedFolders,
               ),
               IconButton(
-                icon: const Icon(Icons.select_all, color: Colors.white),
+                icon: Icon(Icons.select_all, color: context.colors.textPrimary),
                 onPressed: () => setState(() => _selectedFolderIds
                     .addAll(_folders.map((f) => f['id'] as int))),
               ),
@@ -842,15 +877,15 @@ void _showDesignSheet() {
               ),
             ] else if (_selectingPhotos) ...[
               IconButton(
-                icon: const Icon(Icons.drive_file_move_outline,
-                    color: Colors.white),
+                icon: Icon(Icons.drive_file_move_outline,
+                    color: context.colors.textPrimary),
                 onPressed: _selectedPhotoIds.isEmpty
                     ? null
                     : _moveSelectedPhotos,
               ),
               IconButton(
-                icon: const Icon(Icons.lock_open_outlined,
-                    color: Colors.blue),
+                icon: Icon(Icons.lock_open_outlined,
+                    color: Theme.of(context).colorScheme.primary),
                 onPressed: _selectedPhotoIds.isEmpty
                     ? null
                     : () async {
@@ -869,7 +904,7 @@ void _showDesignSheet() {
                       },
               ),
               IconButton(
-                icon: const Icon(Icons.select_all, color: Colors.white),
+                icon: Icon(Icons.select_all, color: context.colors.textPrimary),
                 onPressed: () => setState(() => _selectedPhotoIds
                     .addAll(_photos.map((p) => p['id'] as int))),
               ),
@@ -884,7 +919,7 @@ void _showDesignSheet() {
               IconButton(
                 icon: Icon(
                     _showSearch ? Icons.close : Icons.search,
-                    color: Colors.white),
+                    color: context.colors.textPrimary),
                 onPressed: () {
                   setState(() {
                     _showSearch = !_showSearch;
@@ -897,12 +932,12 @@ void _showDesignSheet() {
                 },
               ),
               IconButton(
-                icon: const Icon(Icons.tune, color: Colors.white),
+                icon: Icon(Icons.tune, color: context.colors.textPrimary),
                 tooltip: 'Diseño',
                 onPressed: _showDesignSheet,
               ),
               IconButton(
-                icon: const Icon(Icons.settings, color: Colors.white),
+                icon: Icon(Icons.settings, color: context.colors.textPrimary),
                 tooltip: 'Configuración',
                 onPressed: () {
                   Navigator.push(
@@ -921,8 +956,8 @@ void _showDesignSheet() {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.folder_off_outlined,
-                        size: 72, color: Colors.white12),
+                    Icon(Icons.folder_off_outlined,
+                        size: 72, color: context.colors.textGhost),
                     const SizedBox(height: 16),
                     Text(
                       _search.isEmpty
@@ -930,7 +965,7 @@ void _showDesignSheet() {
                           : 'Sin resultados para "$_search"',
                       textAlign: TextAlign.center,
                       style: GoogleFonts.poppins(
-                          color: Colors.white24, fontSize: 14),
+                          color: context.colors.textFaint, fontSize: 14),
                     ),
                   ],
                 ),
@@ -955,7 +990,7 @@ void _showDesignSheet() {
                       );
                       if (r == true) _load();
                     },
-                    backgroundColor: const Color(0xFF1565C0),
+                    backgroundColor: Theme.of(context).colorScheme.primary,
                     mini: true,
                     child: const Icon(
                         Icons.add_photo_alternate_outlined,
@@ -1004,13 +1039,13 @@ class _ListPhotoThumbState extends State<_ListPhotoThumb> {
     return Container(
       width: 48, height: 48,
       decoration: BoxDecoration(
-        color: const Color(0xFF2A2A2A),
+        color: context.colors.surfaceHigh,
         borderRadius: BorderRadius.circular(8),
       ),
       clipBehavior: Clip.antiAlias,
       child: _bytes != null
           ? Image.memory(_bytes!, fit: BoxFit.cover)
-          : const Icon(Icons.photo, color: Colors.white24, size: 24),
+          : Icon(Icons.photo, color: context.colors.textFaint, size: 24),
     );
   }
 }

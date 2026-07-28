@@ -4,9 +4,13 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
 import '../../core/security/pin_service.dart';
 import '../../core/services/prefs_service.dart';
+import '../../core/services/theme_service.dart';
+import '../../core/theme/app_colors.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
+import 'package:permission_handler/permission_handler.dart';
 import '../trash/trash_screen.dart';
+import '../intruders/intruder_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -28,11 +32,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _maximizeImages = false;
   bool _noTrash = false;
   bool _darkMode = true;
+  bool _camouflageMode = false;
 
   // Stats
   int _totalPhotos = 0;
   int _totalVideos = 0;
   int _trashCount = 0;
+  int _intruderCount = 0;
 
   @override
   void initState() {
@@ -47,6 +53,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     // Stats reales
     final allPhotos = await db.getAllPhotos();
     final trash = await db.getTrashCount();
+    final intruders = await db.getIntruderCount();
     int photos = 0;
     int videos = 0;
     for (final p in allPhotos) {
@@ -69,8 +76,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _maximizeImages = prefs['maximizeImages'] as bool;
       _noTrash = prefs['noTrash'] as bool;
       _darkMode = prefs['darkMode'] as bool;
+      _camouflageMode = prefs['camouflageMode'] as bool;
       _totalPhotos = photos;
       _totalVideos = videos;
+      _intruderCount = intruders;
       _trashCount = trash;
       _loading = false;
     });
@@ -87,6 +96,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _shakeToClose = value);
         break;
       case 'intruderSelfie':
+        if (value) {
+          final status = await Permission.camera.request();
+          if (!status.isGranted) {
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  backgroundColor: Theme.of(context)
+                      .extension<AppColors>()!
+                      .surface,
+                  content: Text(
+                    'Se necesita permiso de cámara para esta función',
+                    style: GoogleFonts.poppins(color: context.colors.textPrimary),
+                  ),
+                ),
+              );
+            }
+            return;
+          }
+        }
         await PrefsService.instance.saveIntruderSelfie(value);
         setState(() => _intruderSelfie = value);
         break;
@@ -131,8 +159,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
         setState(() => _noTrash = value);
         break;
       case 'darkMode':
-        await PrefsService.instance.saveDarkMode(value);
+        await ThemeService.instance.setDarkMode(value);
         setState(() => _darkMode = value);
+        break;
+      case 'camouflageMode':
+        await PrefsService.instance.saveCamouflageMode(value);
+        setState(() => _camouflageMode = value);
         break;
     }
   }
@@ -140,25 +172,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Scaffold(
-        backgroundColor: Color(0xFF0F0F0F),
+      return Scaffold(
+        backgroundColor: context.colors.bg,
         body: Center(
-            child: CircularProgressIndicator(color: Colors.blue)),
+            child: CircularProgressIndicator(color: Theme.of(context).colorScheme.primary)),
       );
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFF0F0F0F),
+      backgroundColor: context.colors.bg,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0F0F0F),
+        backgroundColor: context.colors.bg,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: Icon(Icons.arrow_back, color: context.colors.textPrimary),
           onPressed: () => Navigator.pop(context),
         ),
         title: Text('Configuración',
             style: GoogleFonts.poppins(
-                color: Colors.white,
+                color: context.colors.textPrimary,
                 fontSize: 18,
                 fontWeight: FontWeight.w600)),
       ),
@@ -175,8 +207,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             iconColor: Colors.redAccent,
             title: 'Papelera',
             subtitle: '$_trashCount archivos eliminados',
-            trailing: const Icon(Icons.chevron_right,
-                color: Colors.white38),
+            trailing: Icon(Icons.chevron_right,
+                color: context.colors.textMuted),
             onTap: () async {
               await Navigator.push(
                 context,
@@ -195,8 +227,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             iconColor: Colors.blue,
             title: 'Cambiar PIN',
             subtitle: 'Modifica tu PIN de acceso',
-            trailing: const Icon(Icons.chevron_right,
-                color: Colors.white38),
+            trailing: Icon(Icons.chevron_right,
+                color: context.colors.textMuted),
             onTap: _showChangePinDialog,
           ),
           _buildSwitchTile(
@@ -219,9 +251,75 @@ class _SettingsScreenState extends State<SettingsScreen> {
             icon: Icons.camera_front_outlined,
             iconColor: Colors.green,
             title: 'Selfie para intrusos',
-            subtitle: 'Toma foto al ingresar PIN incorrecto',
+            subtitle: 'Toma foto al ingresar PIN incorrecto 3 veces',
             value: _intruderSelfie,
             onChanged: (v) => _toggle('intruderSelfie', v),
+          ),
+          _buildTile(
+            icon: Icons.photo_camera_back_outlined,
+            iconColor: Colors.green,
+            title: 'Selfies capturadas',
+            subtitle: '$_intruderCount captura${_intruderCount == 1 ? '' : 's'}',
+            trailing:
+                Icon(Icons.chevron_right, color: context.colors.textMuted),
+            onTap: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const IntruderScreen()),
+              );
+              _loadAll();
+            },
+          ),
+          const SizedBox(height: 8),
+
+          // ── CAMUFLAJE ─────────────────────────────────
+          _buildSectionHeader('Camuflaje'),
+          _buildSwitchTile(
+            icon: Icons.calculate_outlined,
+            iconColor: Colors.indigo,
+            title: 'Modo camuflaje',
+            subtitle: 'La app se abre como una calculadora',
+            value: _camouflageMode,
+            onChanged: (v) async {
+              if (v) {
+                final confirm = await showDialog<bool>(
+                  context: context,
+                  builder: (ctx) => AlertDialog(
+                    backgroundColor:
+                        Theme.of(context).extension<AppColors>()!.surface,
+                    title: Text('¿Activar modo camuflaje?',
+                        style: GoogleFonts.poppins(
+                            color: context.colors.textPrimary)),
+                    content: Text(
+                      'La app se mostrará como una calculadora normal. '
+                      'Para entrar a la galería, escribe tu PIN en la '
+                      'calculadora como si fuera un número y presiona "=".',
+                      style: GoogleFonts.poppins(
+                          color: context.colors.textSecondary),
+                    ),
+                    actions: [
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        child: Text('Cancelar',
+                            style: GoogleFonts.poppins(
+                                color: context.colors.textMuted)),
+                      ),
+                      TextButton(
+                        onPressed: () => Navigator.pop(ctx, true),
+                        child: Text('Activar',
+                            style: GoogleFonts.poppins(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .primary)),
+                      ),
+                    ],
+                  ),
+                );
+                if (confirm == true) _toggle('camouflageMode', true);
+              } else {
+                _toggle('camouflageMode', false);
+              }
+            },
           ),
           const SizedBox(height: 8),
 
@@ -240,8 +338,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
             iconColor: Colors.pink,
             title: 'Paleta de colores',
             subtitle: 'Personaliza los colores de la app',
-            trailing: const Icon(Icons.chevron_right,
-                color: Colors.white38),
+            trailing: Icon(Icons.chevron_right,
+                color: context.colors.textMuted),
             onTap: _showColorPicker,
           ),
           const SizedBox(height: 8),
@@ -292,21 +390,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 final confirm = await showDialog<bool>(
                   context: context,
                   builder: (ctx) => AlertDialog(
-                    backgroundColor: const Color(0xFF1E1E1E),
+                    backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
                     title: Text('¿Sin papelera?',
                         style:
-                            GoogleFonts.poppins(color: Colors.white)),
+                            GoogleFonts.poppins(color: context.colors.textPrimary)),
                     content: Text(
                       'Los archivos eliminados no podrán recuperarse.',
                       style: GoogleFonts.poppins(
-                          color: Colors.white70),
+                          color: context.colors.textSecondary),
                     ),
                     actions: [
                       TextButton(
                         onPressed: () => Navigator.pop(ctx, false),
                         child: Text('Cancelar',
                             style: GoogleFonts.poppins(
-                                color: Colors.white38)),
+                                color: context.colors.textMuted)),
                       ),
                       TextButton(
                         onPressed: () => Navigator.pop(ctx, true),
@@ -328,7 +426,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           Center(
             child: Text('Private Gallery HD v1.0.0',
                 style: GoogleFonts.poppins(
-                    color: Colors.white12, fontSize: 11)),
+                    color: context.colors.textGhost, fontSize: 11)),
           ),
           const SizedBox(height: 20),
         ],
@@ -341,8 +439,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       margin: const EdgeInsets.all(16),
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1565C0), Color(0xFF7C4DFF)],
+        gradient: LinearGradient(
+          colors: [Theme.of(context).colorScheme.primary, Theme.of(context).colorScheme.secondary],
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
         ),
@@ -353,7 +451,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         children: [
           Text('Archivos protegidos',
               style: GoogleFonts.poppins(
-                  color: Colors.white70, fontSize: 12)),
+                  color: context.colors.textSecondary, fontSize: 12)),
           const SizedBox(height: 12),
           Row(
             children: [
@@ -376,16 +474,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget _statItem(IconData icon, String value, String label) {
     return Column(
       children: [
-        Icon(icon, color: Colors.white, size: 24),
+        Icon(icon, color: context.colors.textPrimary, size: 24),
         const SizedBox(height: 4),
         Text(value,
             style: GoogleFonts.poppins(
-                color: Colors.white,
+                color: context.colors.textPrimary,
                 fontSize: 20,
                 fontWeight: FontWeight.w700)),
         Text(label,
             style: GoogleFonts.poppins(
-                color: Colors.white70, fontSize: 11)),
+                color: context.colors.textSecondary, fontSize: 11)),
       ],
     );
   }
@@ -395,7 +493,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Text(title.toUpperCase(),
           style: GoogleFonts.poppins(
-              color: Colors.white38,
+              color: context.colors.textMuted,
               fontSize: 10,
               fontWeight: FontWeight.w600,
               letterSpacing: 1.5)),
@@ -411,7 +509,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required VoidCallback onTap,
   }) {
     return ListTile(
-      tileColor: const Color(0xFF1A1A1A),
+      tileColor: context.colors.surface,
       onTap: onTap,
       leading: Container(
         width: 38, height: 38,
@@ -423,12 +521,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       title: Text(title,
           style: GoogleFonts.poppins(
-              color: Colors.white,
+              color: context.colors.textPrimary,
               fontSize: 14,
               fontWeight: FontWeight.w500)),
       subtitle: Text(subtitle,
           style: GoogleFonts.poppins(
-              color: Colors.white38, fontSize: 11)),
+              color: context.colors.textMuted, fontSize: 11)),
       trailing: trailing,
     );
   }
@@ -442,7 +540,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required void Function(bool) onChanged,
   }) {
     return ListTile(
-      tileColor: const Color(0xFF1A1A1A),
+      tileColor: context.colors.surface,
       leading: Container(
         width: 38, height: 38,
         decoration: BoxDecoration(
@@ -453,21 +551,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ),
       title: Text(title,
           style: GoogleFonts.poppins(
-              color: Colors.white,
+              color: context.colors.textPrimary,
               fontSize: 14,
               fontWeight: FontWeight.w500)),
       subtitle: Text(subtitle,
           style: GoogleFonts.poppins(
-              color: Colors.white38, fontSize: 11)),
+              color: context.colors.textMuted, fontSize: 11)),
       trailing: Switch(
         value: value,
         onChanged: onChanged,
-        activeColor: const Color(0xFF1565C0),
+        activeColor: Theme.of(context).colorScheme.primary,
         trackColor: WidgetStateProperty.resolveWith((states) {
           if (states.contains(WidgetState.selected)) {
-            return const Color(0xFF1565C0).withOpacity(0.3);
+            return Theme.of(context).colorScheme.primary.withOpacity(0.3);
           }
-          return Colors.white12;
+          return context.colors.textGhost;
         }),
       ),
     );
@@ -484,9 +582,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
-          backgroundColor: const Color(0xFF1E1E1E),
+          backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
           title: Text('Cambiar PIN',
-              style: GoogleFonts.poppins(color: Colors.white)),
+              style: GoogleFonts.poppins(color: context.colors.textPrimary)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -516,11 +614,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
               onPressed: () => Navigator.pop(ctx),
               child: Text('Cancelar',
                   style:
-                      GoogleFonts.poppins(color: Colors.white38)),
+                      GoogleFonts.poppins(color: context.colors.textMuted)),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF1565C0)),
+                  backgroundColor: Theme.of(context).colorScheme.primary),
               onPressed: () async {
                 final current = currentCtrl.text.trim();
                 final newPin = newCtrl.text.trim();
@@ -549,21 +647,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   Navigator.pop(ctx);
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      backgroundColor: const Color(0xFF1E1E1E),
+                      backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
                       content: Row(children: [
                         const Icon(Icons.check_circle,
                             color: Colors.green, size: 18),
                         const SizedBox(width: 8),
                         Text('PIN actualizado',
                             style: GoogleFonts.poppins(
-                                color: Colors.white)),
+                                color: context.colors.textPrimary)),
                       ]),
                     ),
                   );
                 }
               },
               child: Text('Guardar',
-                  style: GoogleFonts.poppins(color: Colors.white)),
+                  style: GoogleFonts.poppins(color: context.colors.textPrimary)),
             ),
           ],
         ),
@@ -577,11 +675,11 @@ class _SettingsScreenState extends State<SettingsScreen> {
       obscureText: true,
       keyboardType: TextInputType.number,
       maxLength: 4,
-      style: const TextStyle(color: Colors.white),
+      style: TextStyle(color: context.colors.textPrimary),
       decoration: InputDecoration(
         labelText: label,
-        labelStyle: const TextStyle(color: Colors.white38),
-        counterStyle: const TextStyle(color: Colors.white24),
+        labelStyle: TextStyle(color: context.colors.textMuted),
+        counterStyle: TextStyle(color: context.colors.textFaint),
         enabledBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide: const BorderSide(color: Color(0xFF3D3D3D)),
@@ -589,7 +687,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         focusedBorder: OutlineInputBorder(
           borderRadius: BorderRadius.circular(8),
           borderSide:
-              const BorderSide(color: Color(0xFF1565C0)),
+              BorderSide(color: Theme.of(context).colorScheme.primary),
         ),
       ),
     );
@@ -604,43 +702,64 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     showModalBottomSheet(
       context: context,
-      backgroundColor: const Color(0xFF1A1A1A),
+      backgroundColor: context.colors.surface,
       shape: const RoundedRectangleBorder(
           borderRadius:
               BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (_) => Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Paleta de colores',
-                style: GoogleFonts.poppins(
-                    color: Colors.white,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600)),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: colors
-                  .map((color) => GestureDetector(
-                        onTap: () => Navigator.pop(context),
-                        child: Container(
-                          width: 48, height: 48,
-                          decoration: BoxDecoration(
-                            color: color,
-                            shape: BoxShape.circle,
-                            border: Border.all(
-                                color: Colors.white24, width: 2),
-                          ),
+      builder: (_) => StatefulBuilder(
+        builder: (sheetCtx, setSheetState) {
+          final selected = ThemeService.instance.accentColor;
+          return Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Paleta de colores',
+                    style: GoogleFonts.poppins(
+                        color: context.colors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w600)),
+                const SizedBox(height: 4),
+                Text('Se aplica a toda la app al instante',
+                    style: GoogleFonts.poppins(
+                        color: context.colors.textMuted, fontSize: 11)),
+                const SizedBox(height: 16),
+                Wrap(
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: colors.map((color) {
+                    final isSelected =
+                        color.toARGB32() == selected.toARGB32();
+                    return GestureDetector(
+                      onTap: () async {
+                        await ThemeService.instance.setAccentColor(color);
+                        setSheetState(() {});
+                      },
+                      child: Container(
+                        width: 48, height: 48,
+                        decoration: BoxDecoration(
+                          color: color,
+                          shape: BoxShape.circle,
+                          border: Border.all(
+                              color: isSelected
+                                  ? context.colors.textPrimary
+                                  : context.colors.textFaint,
+                              width: isSelected ? 3 : 2),
                         ),
-                      ))
-                  .toList(),
+                        child: isSelected
+                            ? const Icon(Icons.check,
+                                color: Colors.white, size: 20)
+                            : null,
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 16),
+              ],
             ),
-            const SizedBox(height: 16),
-          ],
-        ),
+          );
+        },
       ),
     );
   }
