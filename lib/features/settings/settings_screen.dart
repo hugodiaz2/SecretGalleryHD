@@ -4,7 +4,6 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
 import '../../core/security/pin_service.dart';
 import '../../core/services/prefs_service.dart';
-import 'package:flutter_windowmanager/flutter_windowmanager.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import '../trash/trash_screen.dart';
@@ -94,11 +93,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
       case 'preventScreenshot':
   await PrefsService.instance.savePreventScreenshot(value);
   if (value) {
-    await FlutterWindowManager.addFlags(
-        FlutterWindowManager.FLAG_SECURE);
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.manual,
+      overlays: SystemUiOverlay.values,
+    );
   } else {
-    await FlutterWindowManager.clearFlags(
-        FlutterWindowManager.FLAG_SECURE);
+    await SystemChrome.setEnabledSystemUIMode(
+      SystemUiMode.edgeToEdge,
+    );
   }
   setState(() => _preventScreenshot = value);
   break;

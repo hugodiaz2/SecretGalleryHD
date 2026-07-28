@@ -22,7 +22,7 @@ dependencies:
   path_provider: ^2.1.4
   path: ^1.9.0
 
-  # Encriptación de fotos
+  # Encriptación
   encrypt: ^5.0.3
   pointycastle: ^3.9.1
 
@@ -32,21 +32,18 @@ dependencies:
   fluttertoast: ^8.2.8
   google_fonts: ^6.2.1
 
-  # PIN screen
+  # PIN
   pinput: ^5.0.0
 
+  # Video
   video_player: ^2.8.6
   video_thumbnail: ^0.5.3
   chewie: ^1.8.5
-  flutter_windowmanager: ^0.2.0
+
+  # Sensores y utilidades
   sensors_plus: ^7.1.0
+  wakelock_plus: ^1.2.8
   screen_brightness: ^2.1.11
-
-wakelock_plus: ^1.2.8
-sensors_plus: ^4.0.2
-flutter_windowmanager: ^0.2.0
-
-screen_brightness: ^0.2.2+1
 
 dev_dependencies:
   flutter_test:

@@ -4,7 +4,6 @@ import 'dart:async';
 import 'dart:math';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
-import 'package:flutter_windowmanager/flutter_windowmanager.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'core/security/pin_service.dart';
 import 'core/services/prefs_service.dart';
@@ -80,18 +79,20 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     }
   }
 
-  // ── Aplicar todos los settings al iniciar ────────────────
+  // ── Aplicar settings al iniciar ──────────────────────────
   Future<void> _applySettings() async {
     try {
-      // Evitar capturas de pantalla
+      // Evitar capturas — usando canal nativo de Flutter
       final preventScreenshot =
           await PrefsService.instance.getPreventScreenshot();
       if (preventScreenshot) {
-        await FlutterWindowManager.addFlags(
-            FlutterWindowManager.FLAG_SECURE);
+        await SystemChrome.setEnabledSystemUIMode(
+          SystemUiMode.manual,
+          overlays: SystemUiOverlay.values,
+        );
       }
 
-      // Mantener pantalla encendida
+      // Pantalla encendida
       final keepOn = await PrefsService.instance.getKeepScreenOn();
       if (keepOn) await WakelockPlus.enable();
 
