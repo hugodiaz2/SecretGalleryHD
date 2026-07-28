@@ -52,7 +52,9 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
   final path =
       await DBHelper.instance.getCoverPhoto(widget.folder['id'] as int);
   if (path != null) {
-    final bytes = await MediaService.instance.getPhotoBytes(path);
+    final bytes = MediaService.isVideoPath(path)
+        ? await MediaService.instance.getVideoThumbnail(path, 'cover_thumb.mp4')
+        : await MediaService.instance.getPhotoBytes(path);
     if (mounted) setState(() => _coverBytes = bytes);
   } else {
     // ✅ Limpiar bytes si no hay portada
@@ -100,6 +102,9 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
                                 Image.memory(
                                   _coverBytes!,
                                   fit: BoxFit.cover,
+                                  errorBuilder: (_, __, ___) => Container(
+                                    color: const Color(0xFF2A2A2A),
+                                  ),
                                 ),
                                 Container(
                                   color: Colors.black.withOpacity(0.3),

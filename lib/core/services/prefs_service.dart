@@ -3,6 +3,8 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 enum GridViewType { grid3, grid4, grid5, grid6, list }
 
+enum AuthMethod { pin, password, fingerprint }
+
 class PrefsService {
   static final PrefsService instance = PrefsService._();
   PrefsService._();
@@ -26,6 +28,7 @@ class PrefsService {
   static const _keyDarkMode = 'dark_mode';
   static const _keyAccentColor = 'accent_color';
   static const _keyCamouflageMode = 'camouflage_mode';
+  static const _keyAuthMethod = 'auth_method';
 
   // ── Grid ────────────────────────────────────────────────
   Future<GridViewType> getGridType() async {
@@ -120,6 +123,18 @@ class PrefsService {
   Future<bool> getCamouflageMode() => _getBool(_keyCamouflageMode);
   Future<void> saveCamouflageMode(bool v) =>
       _setBool(_keyCamouflageMode, v);
+
+  Future<AuthMethod> getAuthMethod() async {
+    final val = await _storage.read(key: _keyAuthMethod);
+    return AuthMethod.values.firstWhere(
+      (e) => e.name == val,
+      orElse: () => AuthMethod.pin,
+    );
+  }
+
+  Future<void> saveAuthMethod(AuthMethod method) async {
+    await _storage.write(key: _keyAuthMethod, value: method.name);
+  }
 
   // ── Cargar todos de una vez ──────────────────────────────
   Future<Map<String, dynamic>> loadAll() async {

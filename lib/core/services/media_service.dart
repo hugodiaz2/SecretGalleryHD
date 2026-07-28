@@ -15,6 +15,23 @@ class MediaService {
   final _crypto = CryptoService();
   final _db = DBHelper.instance;
 
+  static const _videoExtensions = [
+    'mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'
+  ];
+
+  /// Detecta si un archivo encriptado es un video a partir de su propio
+  /// nombre (encryptAndSave lo guarda como `{timestamp}_{originalName}.enc`,
+  /// así que la extensión original queda embebida en la ruta). Útil cuando
+  /// solo se tiene `encrypted_path` y no el `original_name` por separado
+  /// (por ejemplo, la portada de una carpeta).
+  static bool isVideoPath(String encryptedPath) {
+    final withoutEnc = encryptedPath.toLowerCase().endsWith('.enc')
+        ? encryptedPath.substring(0, encryptedPath.length - 4)
+        : encryptedPath;
+    final ext = withoutEnc.split('.').last.toLowerCase();
+    return _videoExtensions.contains(ext);
+  }
+
   Future<bool> requestPermission() async {
     final permission = await PhotoManager.requestPermissionExtend();
     if (!permission.isAuth && !permission.hasAccess) {
@@ -167,13 +184,20 @@ class MediaService {
   }
 
   // ── Desbloquear y restaurar a galería ───────────────────
+  static const _unlockRelativePath = 'DCIM/Secret Gallery HD';
+
+  bool _isVideoFile(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext);
+  }
+
   Future<void> unlockPhotos(List<Map<String, dynamic>> photos) async {
     for (final photo in photos) {
       try {
         final bytes =
             await _crypto.decryptFile(photo['encrypted_path']);
 
-        final dir = Directory('/storage/emulated/0/DCIM/Restored');
+        final dir = Directory('/storage/emulated/0/$_unlockRelativePath');
         if (!await dir.exists()) await dir.create(recursive: true);
 
         final fileName = photo['original_name'] ??
@@ -181,10 +205,19 @@ class MediaService {
         final destFile = File('${dir.path}/$fileName');
         await destFile.writeAsBytes(bytes);
 
-        await PhotoManager.editor.saveImageWithPath(
-          destFile.path,
-          title: fileName,
-        );
+        if (_isVideoFile(fileName)) {
+          await PhotoManager.editor.saveVideo(
+            destFile,
+            title: fileName,
+            relativePath: _unlockRelativePath,
+          );
+        } else {
+          await PhotoManager.editor.saveImageWithPath(
+            destFile.path,
+            title: fileName,
+            relativePath: _unlockRelativePath,
+          );
+        }
 
         await deleteEncryptedFile(photo['encrypted_path']);
         await _db.deletePhoto(photo['id']);

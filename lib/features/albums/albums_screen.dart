@@ -945,7 +945,7 @@ void _showDesignSheet() {
                     MaterialPageRoute(
                       builder: (_) => const SettingsScreen(),
                     ),
-                  );
+                  ).then((_) => _load());
                 },
               ),
             ],

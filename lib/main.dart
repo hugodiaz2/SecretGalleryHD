@@ -8,7 +8,10 @@ import 'package:screen_brightness/screen_brightness.dart';
 import 'core/security/pin_service.dart';
 import 'core/services/prefs_service.dart';
 import 'core/services/theme_service.dart';
+import 'core/services/security_channel.dart';
 import 'features/lock/pin_screen.dart';
+import 'features/lock/password_screen.dart';
+import 'features/lock/fingerprint_screen.dart';
 import 'features/albums/albums_screen.dart';
 import 'features/camouflage/calculator_screen.dart';
 
@@ -27,7 +30,7 @@ class SecretGalleryApp extends StatelessWidget {
     return AnimatedBuilder(
       animation: ThemeService.instance,
       builder: (context, _) => MaterialApp(
-        title: 'Private Gallery HD',
+        title: 'Secret Gallery HD',
         debugShowCheckedModeBanner: false,
         theme: ThemeService.instance.themeData,
         home: const AppEntry(),
@@ -48,6 +51,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _loading = true;
   bool _hasPin = false;
   bool _camouflageMode = false;
+  AuthMethod _authMethod = AuthMethod.pin;
   StreamSubscription? _shakeSubscription;
   DateTime? _lastShake;
 
@@ -82,15 +86,10 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   // ── Aplicar settings al iniciar ──────────────────────────
   Future<void> _applySettings() async {
     try {
-      // Evitar capturas — usando canal nativo de Flutter
+      // Evitar capturas — FLAG_SECURE nativo (bloquea screenshots/grabación)
       final preventScreenshot =
           await PrefsService.instance.getPreventScreenshot();
-      if (preventScreenshot) {
-        await SystemChrome.setEnabledSystemUIMode(
-          SystemUiMode.manual,
-          overlays: SystemUiOverlay.values,
-        );
-      }
+      await SecurityChannel.setSecure(preventScreenshot);
 
       // Pantalla encendida
       final keepOn = await PrefsService.instance.getKeepScreenOn();
@@ -134,11 +133,19 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   Future<void> _check() async {
     final has = await _pinService.hasPin();
     final camouflage = has && await PrefsService.instance.getCamouflageMode();
+    final authMethod = await PrefsService.instance.getAuthMethod();
     setState(() {
       _hasPin = has;
       _camouflageMode = camouflage;
+      _authMethod = authMethod;
       _loading = false;
     });
+  }
+
+  void _goToGallery() {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (_) => const AlbumsScreen()),
+    );
   }
 
   @override
@@ -154,11 +161,20 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
     if (_camouflageMode) {
       return const CalculatorScreen();
     }
-    return PinScreen(
-      mode: _hasPin ? PinMode.unlock : PinMode.setup,
-      onSuccess: () => Navigator.of(context).pushReplacement(
-        MaterialPageRoute(builder: (_) => const AlbumsScreen()),
-      ),
-    );
+
+    // Sin PIN aún (primera vez): siempre pasa por la configuración de PIN.
+    if (!_hasPin) {
+      return PinScreen(mode: PinMode.setup, onSuccess: _goToGallery);
+    }
+
+    switch (_authMethod) {
+      case AuthMethod.password:
+        return PasswordScreen(
+            mode: PasswordMode.unlock, onSuccess: _goToGallery);
+      case AuthMethod.fingerprint:
+        return FingerprintScreen(onSuccess: _goToGallery);
+      case AuthMethod.pin:
+        return PinScreen(mode: PinMode.unlock, onSuccess: _goToGallery);
+    }
   }
 }

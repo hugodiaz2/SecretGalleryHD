@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>Secret Gallery</string>
+	<string>Secret Gallery HD</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -47,5 +47,7 @@
 	<true/>
 	<key>NSCameraUsageDescription</key>
 	<string>Se usa para tomar una foto de seguridad cuando se ingresa un PIN incorrecto varias veces.</string>
+	<key>NSFaceIDUsageDescription</key>
+	<string>Se usa Face ID para desbloquear la galería.</string>
 </dict>
 </plist>

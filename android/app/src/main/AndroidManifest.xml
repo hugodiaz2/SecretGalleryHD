@@ -11,8 +11,9 @@
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-feature android:name="android.hardware.camera" android:required="false"/>
     <uses-feature android:name="android.hardware.camera.front" android:required="false"/>
+    <uses-permission android:name="android.permission.USE_BIOMETRIC"/>
     <application
-        android:label="secret_gallery"
+        android:label="Secret Gallery HD"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

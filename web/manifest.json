@@ -1,6 +1,6 @@
 {
-    "name": "secret_gallery",
-    "short_name": "secret_gallery",
+    "name": "Secret Gallery HD",
+    "short_name": "Secret Gallery HD",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

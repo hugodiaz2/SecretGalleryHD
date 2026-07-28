@@ -876,7 +876,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                       initialIndex: photoIndex >= 0 ? photoIndex : 0,
                     ),
                   ),
-                );
+                ).then((_) => _load());
               }
             }
           },
@@ -1016,7 +1016,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                       initialIndex: photoIndex >= 0 ? photoIndex : 0,
                     ),
                   ),
-                );
+                ).then((_) => _load());
               }
             }
           },

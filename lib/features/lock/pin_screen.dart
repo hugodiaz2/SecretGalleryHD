@@ -4,6 +4,8 @@ import 'package:google_fonts/google_fonts.dart';
 import '../../core/security/pin_service.dart';
 import '../../core/security/intruder_service.dart';
 import '../../core/services/prefs_service.dart';
+import '../../core/services/theme_service.dart';
+import 'lock_header.dart';
 
 enum PinMode { setup, unlock }
 
@@ -29,12 +31,9 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
 
   late final AnimationController _shakeController;
   late final AnimationController _dotController;
-  late final AnimationController _titleController;
 
   late final Animation<double> _shakeAnimation;
   late final Animation<double> _dotScale;
-  late final Animation<double> _titleFade;
-  late final Animation<Offset> _titleSlide;
 
   @override
   void initState() {
@@ -64,34 +63,12 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _dotController, curve: Curves.easeOut),
     );
 
-    _titleController = AnimationController(
-      duration: const Duration(milliseconds: 900),
-      vsync: this,
-    );
-    _titleFade = Tween<double>(begin: 0.0, end: 1.0).animate(
-      CurvedAnimation(
-        parent: _titleController,
-        curve: const Interval(0.0, 0.7, curve: Curves.easeOut),
-      ),
-    );
-    _titleSlide = Tween<Offset>(
-      begin: const Offset(0.0, -0.25),
-      end: Offset.zero,
-    ).animate(
-      CurvedAnimation(
-        parent: _titleController,
-        curve: Curves.easeOutCubic,
-      ),
-    );
-
-    _titleController.forward();
   }
 
   @override
   void dispose() {
     _shakeController.dispose();
     _dotController.dispose();
-    _titleController.dispose();
     super.dispose();
   }
 
@@ -209,13 +186,7 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
               SizedBox(height: size.height * 0.05),
 
               // Header animado
-              FadeTransition(
-                opacity: _titleFade,
-                child: SlideTransition(
-                  position: _titleSlide,
-                  child: _buildHeader(),
-                ),
-              ),
+              const LockHeader(),
 
               SizedBox(height: size.height * 0.05),
 
@@ -286,140 +257,6 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
     );
   }
 
-  // ── Header ────────────────────────────────────────────────
-  Widget _buildHeader() {
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        // Ícono con glow
-        TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0.0, end: 1.0),
-          duration: const Duration(milliseconds: 1200),
-          builder: (_, v, child) {
-            return Container(
-              width: 86,
-              height: 86,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                color: const Color(0xFF12122A),
-                boxShadow: [
-                  BoxShadow(
-                    color: const Color(0xFF3D5AFE).withOpacity(0.25 * v),
-                    blurRadius: 30 * v,
-                    spreadRadius: 4 * v,
-                  ),
-                  BoxShadow(
-                    color: const Color(0xFF7C4DFF).withOpacity(0.15 * v),
-                    blurRadius: 60 * v,
-                    spreadRadius: 8 * v,
-                  ),
-                ],
-                border: Border.all(
-                  color: const Color(0xFF3D5AFE).withOpacity(0.3 * v),
-                  width: 1.5,
-                ),
-              ),
-              child: child,
-            );
-          },
-          child: const Icon(
-            Icons.lock_rounded,
-            color: Colors.white,
-            size: 40,
-          ),
-        ),
-
-        const SizedBox(height: 24),
-
-        // PRIVATE
-        ShaderMask(
-          shaderCallback: (bounds) => const LinearGradient(
-            colors: [
-              Color(0xFFFFFFFF),
-              Color(0xFF90CAF9),
-              Color(0xFF7C4DFF),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ).createShader(bounds),
-          child: Text(
-            'PRIVATE',
-            style: GoogleFonts.poppins(
-              fontSize: 34,
-              fontWeight: FontWeight.w800,
-              color: Colors.white,
-              letterSpacing: 8,
-            ),
-          ),
-        ),
-
-        const SizedBox(height: 4),
-
-        // GALLERY HD
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              'GALLERY',
-              style: GoogleFonts.poppins(
-                fontSize: 14,
-                fontWeight: FontWeight.w300,
-                color: Colors.white38,
-                letterSpacing: 10,
-              ),
-            ),
-            const SizedBox(width: 8),
-            Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 7, vertical: 2),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF3D5AFE), Color(0xFF7C4DFF)],
-                ),
-                borderRadius: BorderRadius.circular(4),
-              ),
-              child: Text(
-                'HD',
-                style: GoogleFonts.poppins(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white,
-                  letterSpacing: 2,
-                ),
-              ),
-            ),
-          ],
-        ),
-
-        const SizedBox(height: 10),
-
-        // Línea decorativa
-        TweenAnimationBuilder<double>(
-          tween: Tween(begin: 0.0, end: 1.0),
-          duration: const Duration(milliseconds: 1000),
-          curve: Curves.easeOutCubic,
-          builder: (_, v, __) {
-            return Container(
-              width: 70 * v,
-              height: 1.5,
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(1),
-                gradient: LinearGradient(
-                  colors: [
-                    Colors.transparent,
-                    const Color(0xFF3D5AFE).withOpacity(v),
-                    const Color(0xFF7C4DFF).withOpacity(v),
-                    Colors.transparent,
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ],
-    );
-  }
 
   // ── Dots ─────────────────────────────────────────────────
   Widget _buildDots() {
@@ -559,12 +396,15 @@ class _KeyBtnState extends State<_KeyBtn>
     with SingleTickerProviderStateMixin {
   late final AnimationController _ctrl;
   late final Animation<double> _scale;
+  late final Color _glowColor;
 
   @override
   void initState() {
     super.initState();
+    _glowColor = ThemeService.instance.accentColor;
     _ctrl = AnimationController(
       duration: const Duration(milliseconds: 90),
+      reverseDuration: const Duration(milliseconds: 280),
       vsync: this,
     );
     _scale = Tween<double>(begin: 1.0, end: 0.87).animate(
@@ -587,21 +427,39 @@ class _KeyBtnState extends State<_KeyBtn>
         widget.onTap();
       },
       onTapCancel: () => _ctrl.reverse(),
-      child: ScaleTransition(
-        scale: _scale,
-        child: Container(
-          width: widget.width,
-          height: widget.height,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(14),
-            color: Colors.white.withOpacity(0.05),
-            border: Border.all(
-              color: Colors.white.withOpacity(0.08),
-              width: 1,
+      child: AnimatedBuilder(
+        animation: _ctrl,
+        builder: (_, child) {
+          final t = _ctrl.value;
+          return Transform.scale(
+            scale: _scale.value,
+            child: Container(
+              width: widget.width,
+              height: widget.height,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(14),
+                color: Color.lerp(Colors.white.withOpacity(0.05),
+                    _glowColor.withOpacity(0.35), t),
+                border: Border.all(
+                  color: Color.lerp(Colors.white.withOpacity(0.08),
+                      _glowColor, t)!,
+                  width: 1 + t,
+                ),
+                boxShadow: t == 0
+                    ? null
+                    : [
+                        BoxShadow(
+                          color: _glowColor.withOpacity(0.5 * t),
+                          blurRadius: 20 * t,
+                          spreadRadius: 1.5 * t,
+                        ),
+                      ],
+              ),
+              child: child,
             ),
-          ),
-          child: Center(child: widget.child),
-        ),
+          );
+        },
+        child: Center(child: widget.child),
       ),
     );
   }

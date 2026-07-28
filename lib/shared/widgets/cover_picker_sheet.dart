@@ -181,12 +181,22 @@ class _PhotoThumb extends StatefulWidget {
 class _PhotoThumbState extends State<_PhotoThumb> {
   Uint8List? _bytes;
 
+  bool get _isVideo {
+    final name = (widget.photo['original_name'] ?? '') as String;
+    final ext = name.split('.').last.toLowerCase();
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv']
+        .contains(ext);
+  }
+
   @override
   void initState() {
     super.initState();
-    MediaService.instance
-        .getPhotoBytes(widget.photo['encrypted_path'])
-        .then((b) {
+    final path = widget.photo['encrypted_path'] as String;
+    final future = _isVideo
+        ? MediaService.instance.getVideoThumbnail(
+            path, widget.photo['original_name'] ?? 'video.mp4')
+        : MediaService.instance.getPhotoBytes(path);
+    future.then((b) {
       if (mounted) setState(() => _bytes = b);
     });
   }
@@ -195,10 +205,26 @@ class _PhotoThumbState extends State<_PhotoThumb> {
   Widget build(BuildContext context) {
     return Container(
       color: const Color(0xFF2A2A2A),
-      child: _bytes != null
-          ? Image.memory(_bytes!, fit: BoxFit.cover)
-          : const Center(
-              child: Icon(Icons.photo, color: Colors.white24, size: 24)),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _bytes != null
+              ? Image.memory(
+                  _bytes!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Center(
+                      child: Icon(Icons.broken_image,
+                          color: Colors.white24, size: 24)),
+                )
+              : const Center(
+                  child: Icon(Icons.photo, color: Colors.white24, size: 24)),
+          if (_isVideo)
+            const Center(
+              child: Icon(Icons.play_circle_outline,
+                  color: Colors.white70, size: 22),
+            ),
+        ],
+      ),
     );
   }
 }

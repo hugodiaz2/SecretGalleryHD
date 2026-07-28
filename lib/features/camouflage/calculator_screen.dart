@@ -85,9 +85,9 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => PinScreen(
+            builder: (routeContext) => PinScreen(
               mode: PinMode.unlock,
-              onSuccess: () => Navigator.of(context).pushReplacement(
+              onSuccess: () => Navigator.of(routeContext).pushReplacement(
                 MaterialPageRoute(builder: (_) => const AlbumsScreen()),
               ),
             ),

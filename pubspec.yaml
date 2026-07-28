@@ -43,6 +43,9 @@ dependencies:
   # Selfie de intrusos
   camera: ^0.10.6
 
+  # Huella dactilar
+  local_auth: ^2.3.0
+
   # Sensores y utilidades
   sensors_plus: ^7.1.0
   wakelock_plus: ^1.2.8
@@ -52,6 +55,18 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.13.1
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/icon/
+
+flutter_launcher_icons:
+  android: true
+  ios: true
+  remove_alpha_ios: true
+  image_path: "assets/icon/hd.png"
+  adaptive_icon_background: "#0F0F1A"
+  adaptive_icon_foreground: "assets/icon/hd.png"
+  min_sdk_android: 21
