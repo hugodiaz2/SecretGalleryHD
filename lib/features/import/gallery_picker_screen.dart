@@ -153,28 +153,8 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
   @override
   Widget build(BuildContext context) {
     if (_importing) {
-      return Scaffold(
-        backgroundColor: const Color(0xFF121212),
-        body: Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(color: Colors.blue),
-              const SizedBox(height: 20),
-              Text(
-                'Importando $_importCurrent de $_importTotal...',
-                style: GoogleFonts.poppins(color: Colors.white70),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                'Encriptando y ocultando...',
-                style: GoogleFonts.poppins(
-                    color: Colors.white38, fontSize: 12),
-              ),
-            ],
-          ),
-        ),
-      );
+      return _ImportingOverlay(
+          current: _importCurrent, total: _importTotal);
     }
 
     return WillPopScope(
@@ -501,5 +481,120 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
       return '${duration.inHours}:$m:$s';
     }
     return '$m:$s';
+  }
+}
+
+// ── Vista de carga al importar ───────────────────────────────
+class _ImportingOverlay extends StatefulWidget {
+  final int current;
+  final int total;
+
+  const _ImportingOverlay({required this.current, required this.total});
+
+  @override
+  State<_ImportingOverlay> createState() => _ImportingOverlayState();
+}
+
+class _ImportingOverlayState extends State<_ImportingOverlay>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulseController;
+
+  static const _phrases = [
+    'Protegiendo foto...',
+    'Ocultando foto...',
+    'Encriptando...',
+    'Guardando en la bóveda...',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1300),
+      vsync: this,
+    )..repeat(reverse: true);
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final phrase = _phrases[widget.current % _phrases.length];
+    final progress =
+        widget.total == 0 ? null : widget.current / widget.total;
+
+    return Scaffold(
+      backgroundColor: const Color(0xFF121212),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            AnimatedBuilder(
+              animation: _pulseController,
+              builder: (_, child) {
+                final v = _pulseController.value;
+                return Container(
+                  width: 90,
+                  height: 90,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    color: const Color(0xFF12122A),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.blue.withOpacity(0.25 + 0.15 * v),
+                        blurRadius: 20 + 20 * v,
+                        spreadRadius: 2 + 4 * v,
+                      ),
+                    ],
+                    border: Border.all(
+                      color: Colors.blue.withOpacity(0.4),
+                      width: 1.5,
+                    ),
+                  ),
+                  child: child,
+                );
+              },
+              child: const Icon(Icons.shield_outlined,
+                  color: Colors.white, size: 40),
+            ),
+            const SizedBox(height: 28),
+            Text(
+              'Ocultando ${widget.current} de ${widget.total}',
+              style: GoogleFonts.poppins(
+                  color: Colors.white,
+                  fontSize: 15,
+                  fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 14),
+            SizedBox(
+              width: 200,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(10),
+                child: LinearProgressIndicator(
+                  value: progress,
+                  minHeight: 6,
+                  backgroundColor: Colors.white12,
+                  valueColor: const AlwaysStoppedAnimation(Colors.blue),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            AnimatedSwitcher(
+              duration: const Duration(milliseconds: 300),
+              child: Text(
+                phrase,
+                key: ValueKey(phrase),
+                style:
+                    GoogleFonts.poppins(color: Colors.white38, fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

@@ -101,6 +101,13 @@ class MediaService {
   }) async {
     await _ensureNomedia();
 
+    // Se acumulan los IDs y se borran todos juntos al final: Android pide
+    // confirmación al usuario para borrar medios que no le pertenecen a la
+    // app, y si se llama deleteWithIds() en cada vuelta del loop esa
+    // confirmación aparece una vez POR FOTO. Con un solo borrado en lote
+    // el sistema solo pregunta una vez para todo el import.
+    final idsToDelete = <String>[];
+
     for (int i = 0; i < assets.length; i++) {
       final asset = assets[i];
       final file = await asset.originFile;
@@ -121,12 +128,20 @@ class MediaService {
           'date_added': DateTime.now().millisecondsSinceEpoch,
         });
 
-        await PhotoManager.editor.deleteWithIds([asset.id]);
+        idsToDelete.add(asset.id);
       } catch (e) {
         debugPrint('Error importando archivo $i: $e');
       }
 
       onProgress(i + 1, assets.length);
+    }
+
+    if (idsToDelete.isNotEmpty) {
+      try {
+        await PhotoManager.editor.deleteWithIds(idsToDelete);
+      } catch (e) {
+        debugPrint('Error eliminando originales de la galería: $e');
+      }
     }
 
     await PhotoManager.clearFileCache();
