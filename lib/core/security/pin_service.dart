@@ -28,4 +28,9 @@ class PinService {
   Future<void> deletePin() async {
     await _storage.delete(key: _key);
   }
+
+  /// Solo para empaquetar/restaurar respaldos: el PIN se guarda en texto
+  /// plano en el storage seguro, así que exponerlo crudo no cambia el
+  /// modelo de seguridad existente.
+  Future<String?> rawPin() => _storage.read(key: _key);
 }

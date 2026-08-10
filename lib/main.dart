@@ -7,6 +7,7 @@ import 'core/security/pin_service.dart';
 import 'core/services/prefs_service.dart';
 import 'core/services/theme_service.dart';
 import 'core/services/security_channel.dart';
+import 'core/services/lifecycle_guard.dart';
 import 'features/lock/pin_screen.dart';
 import 'features/lock/password_screen.dart';
 import 'features/lock/fingerprint_screen.dart';
@@ -73,6 +74,12 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.paused) {
+      if (LifecycleGuard.isSuppressed) {
+        // La propia app abrió algo externo a propósito (compartir,
+        // elegir un archivo de respaldo, etc.): no es el usuario saliendo.
+        return;
+      }
+
       final closeOnMinimize =
           await PrefsService.instance.getCloseOnMinimize();
       if (closeOnMinimize) {

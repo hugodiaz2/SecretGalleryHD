@@ -11,6 +11,7 @@ import 'package:permission_handler/permission_handler.dart';
 import '../trash/trash_screen.dart';
 import '../intruders/intruder_screen.dart';
 import '../lock/access_method_screen.dart';
+import '../backup/backup_screen.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -25,7 +26,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   // Toggles
   bool _closeOnMinimize = false;
   bool _intruderSelfie = false;
-  bool _preventScreenshot = true;
+  bool _preventScreenshot = false;
   bool _keepScreenOn = false;
   bool _maximizeBrightness = false;
   bool _maximizeImages = false;
@@ -215,6 +216,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     builder: (_) => const TrashScreen()),
               );
               _loadAll(); // recargar stats al volver
+            },
+          ),
+          const SizedBox(height: 8),
+
+          // ── RESPALDO ───────────────────────────────────
+          _buildSectionHeader('Respaldo'),
+          _buildTile(
+            icon: Icons.cloud_upload_outlined,
+            iconColor: Colors.teal,
+            title: 'Exportar / restaurar respaldo',
+            subtitle: 'Guarda tu bóveda en Drive, tu PC, etc.',
+            trailing: Icon(Icons.chevron_right,
+                color: context.colors.textMuted),
+            onTap: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const BackupScreen()),
+              );
             },
           ),
           const SizedBox(height: 8),

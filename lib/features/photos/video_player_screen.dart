@@ -10,6 +10,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/database/db_helper.dart';
 import '../../core/services/media_service.dart';
 import '../../core/services/prefs_service.dart';
+import '../../core/services/lifecycle_guard.dart';
 import '../../shared/widgets/folder_tree_sheet.dart';
 import '../../shared/widgets/unlock_helper.dart';
 
@@ -212,7 +213,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   Future<void> _shareVideo() async {
     _videoController?.pause();
     if (_tempFile == null || !mounted) return;
-    await Share.shareXFiles([XFile(_tempFile!.path)]);
+    await LifecycleGuard.run(() => Share.shareXFiles([XFile(_tempFile!.path)]));
   }
 
   // ── Mover a carpeta ───────────────────────────────────────

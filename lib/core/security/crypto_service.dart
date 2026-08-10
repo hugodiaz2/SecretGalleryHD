@@ -69,4 +69,17 @@ class CryptoService {
     final file = File(path);
     if (await file.exists()) await file.delete();
   }
+
+  /// Solo para empaquetar/restaurar respaldos: la clave AES que protege
+  /// todas las fotos. Sin ella, los archivos ".enc" son irrecuperables.
+  Future<String> rawKeyBase64() async {
+    final key = await _getKey();
+    return key.base64;
+  }
+
+  /// Reemplaza la clave AES actual por una restaurada de un respaldo.
+  Future<void> setRawKeyBase64(String base64Key) async {
+    await _storage.write(key: _keyName, value: base64Key);
+    _key = Key.fromBase64(base64Key);
+  }
 }

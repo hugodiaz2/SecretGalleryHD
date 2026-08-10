@@ -6,15 +6,25 @@ class DBHelper {
   static Database? _db;
   DBHelper._internal();
 
+  static const dbFileName = 'secret_gallery_v3.db';
+
   Future<Database> get database async {
     _db ??= await _initDB();
     return _db!;
   }
 
   Future<Database> _initDB() async {
-    final path = join(await getDatabasesPath(), 'secret_gallery_v3.db');
+    final path = join(await getDatabasesPath(), dbFileName);
     return await openDatabase(path,
         version: 2, onCreate: _onCreate, onUpgrade: _onUpgrade);
+  }
+
+  /// Cierra la conexión activa y limpia la instancia en caché. Se usa al
+  /// restaurar un respaldo, para poder reemplazar el archivo .db en disco
+  /// sin que sqflite siga escribiendo sobre el manejador viejo.
+  Future<void> closeAndReset() async {
+    await _db?.close();
+    _db = null;
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {

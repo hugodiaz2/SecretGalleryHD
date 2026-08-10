@@ -86,7 +86,7 @@ class PrefsService {
       _setBool(_keyIntruderSelfie, v);
 
   Future<bool> getPreventScreenshot() =>
-      _getBool(_keyPreventScreenshot, defaultValue: true);
+      _getBool(_keyPreventScreenshot, defaultValue: false);
   Future<void> savePreventScreenshot(bool v) =>
       _setBool(_keyPreventScreenshot, v);
 

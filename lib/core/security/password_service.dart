@@ -23,4 +23,7 @@ class PasswordService {
   Future<void> deletePassword() async {
     await _storage.delete(key: _key);
   }
+
+  /// Solo para empaquetar/restaurar respaldos.
+  Future<String?> rawPassword() => _storage.read(key: _key);
 }

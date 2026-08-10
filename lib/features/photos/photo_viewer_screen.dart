@@ -7,6 +7,7 @@ import 'package:share_plus/share_plus.dart';
 import '../../core/database/db_helper.dart';
 import '../../core/services/media_service.dart';
 import '../../core/services/prefs_service.dart';
+import '../../core/services/lifecycle_guard.dart';
 import '../../shared/widgets/folder_tree_sheet.dart';
 import '../../shared/widgets/unlock_helper.dart';
 import 'video_player_screen.dart';
@@ -195,7 +196,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     final name = (photo['original_name'] as String?) ?? 'archivo';
     final tempFile = File('${tempDir.path}/$name');
     await tempFile.writeAsBytes(bytes);
-    await Share.shareXFiles([XFile(tempFile.path)]);
+    await LifecycleGuard.run(() => Share.shareXFiles([XFile(tempFile.path)]));
   }
 
   // ── Mover a carpeta ───────────────────────────────────────

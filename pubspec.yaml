@@ -51,6 +51,10 @@ dependencies:
   wakelock_plus: ^1.2.8
   screen_brightness: ^2.1.11
 
+  # Respaldo
+  archive: ^3.6.1
+  file_picker: ^8.1.4
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
