@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/security/pin_service.dart';
-import '../lock/pin_screen.dart';
-import '../albums/albums_screen.dart';
 
 /// Disfraz de la app: una calculadora normal y funcional. Si el usuario
 /// escribe su PIN (como si fuera un número cualquiera) y presiona "=",
-/// en vez de mostrar un resultado abre la galería secreta. Cualquier
-/// otra operación se comporta como una calculadora real.
+/// en vez de mostrar un resultado avisa que se desbloqueó (vía
+/// [onUnlocked], manejado por AppEntry). Cualquier otra operación se
+/// comporta como una calculadora real.
 class CalculatorScreen extends StatefulWidget {
-  const CalculatorScreen({super.key});
+  final VoidCallback onUnlocked;
+
+  const CalculatorScreen({super.key, required this.onUnlocked});
 
   @override
   State<CalculatorScreen> createState() => _CalculatorScreenState();
@@ -82,17 +84,8 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     if (_pendingOp == null && _rawEntry.isNotEmpty) {
       final valid = await _pinService.validatePin(_rawEntry);
       if (valid) {
-        if (!mounted) return;
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (routeContext) => PinScreen(
-              mode: PinMode.unlock,
-              onSuccess: () => Navigator.of(routeContext).pushReplacement(
-                MaterialPageRoute(builder: (_) => const AlbumsScreen()),
-              ),
-            ),
-          ),
-        );
+        HapticFeedback.heavyImpact();
+        widget.onUnlocked();
         return;
       }
     }
@@ -191,7 +184,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
                     _btn('+', onTap: () => _inputOperator('+'), bg: const Color(0xFFFF9F0A)),
                   ]),
                   _row([
-                    _btn('0', onTap: () => _inputDigit('0'), flex: 2, alignLeft: true),
+                    _btn('0', onTap: () => _inputDigit('0'), flex: 2),
                     _btn('.', onTap: () => _inputDigit('.')),
                     _btn('=', onTap: _equals, bg: const Color(0xFFFF9F0A)),
                   ]),
@@ -217,7 +210,6 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
     Color bg = const Color(0xFF333333),
     Color fg = Colors.white,
     int flex = 1,
-    bool alignLeft = false,
   }) {
     return Expanded(
       flex: flex,
@@ -232,9 +224,7 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
             child: InkWell(
               onTap: onTap,
               child: Align(
-                alignment: alignLeft
-                    ? const Alignment(-0.6, 0)
-                    : Alignment.center,
+                alignment: Alignment.center,
                 child: Text(
                   label,
                   style: TextStyle(

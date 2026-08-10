@@ -2,7 +2,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class PasswordService {
   static const _key = 'secret_gallery_password';
-  final _storage = const FlutterSecureStorage();
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(resetOnError: true),
+  );
 
   Future<bool> hasPassword() async {
     final pw = await _storage.read(key: _key);

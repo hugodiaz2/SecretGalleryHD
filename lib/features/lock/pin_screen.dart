@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/security/pin_service.dart';
 import '../../core/security/intruder_service.dart';
+import '../../core/security/biometric_service.dart';
 import '../../core/services/prefs_service.dart';
 import '../../core/services/theme_service.dart';
 import 'lock_header.dart';
@@ -28,6 +29,7 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
   bool _isConfirming = false;
   bool _error = false;
   int _failedAttempts = 0;
+  bool _hasFingerprintOption = false;
 
   late final AnimationController _shakeController;
   late final AnimationController _dotController;
@@ -63,6 +65,21 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _dotController, curve: Curves.easeOut),
     );
 
+    if (widget.mode == PinMode.unlock) _checkFingerprintOption();
+  }
+
+  Future<void> _checkFingerprintOption() async {
+    final available = await BiometricService.instance.isAvailable();
+    if (mounted) setState(() => _hasFingerprintOption = available);
+  }
+
+  Future<void> _useFingerprint() async {
+    final ok = await BiometricService.instance.authenticate();
+    if (!mounted) return;
+    if (ok) {
+      HapticFeedback.heavyImpact();
+      widget.onSuccess();
+    }
   }
 
   @override
@@ -229,7 +246,7 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
 
               SizedBox(height: size.height * 0.02),
 
-              // Botón volver
+              // Botón volver / usar huella
               SizedBox(
                 height: 40,
                 child: _isConfirming
@@ -246,7 +263,19 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
                               color: Colors.white24, fontSize: 13),
                         ),
                       )
-                    : const SizedBox.shrink(),
+                    : (widget.mode == PinMode.unlock &&
+                            _hasFingerprintOption)
+                        ? TextButton.icon(
+                            onPressed: _useFingerprint,
+                            icon: const Icon(Icons.fingerprint,
+                                color: Colors.white24, size: 18),
+                            label: Text(
+                              'Usar huella dactilar',
+                              style: GoogleFonts.poppins(
+                                  color: Colors.white24, fontSize: 13),
+                            ),
+                          )
+                        : const SizedBox.shrink(),
               ),
 
               SizedBox(height: size.height * 0.02),

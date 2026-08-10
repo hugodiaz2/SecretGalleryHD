@@ -1,8 +1,6 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'dart:async';
-import 'dart:math';
-import 'package:sensors_plus/sensors_plus.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'core/security/pin_service.dart';
@@ -12,6 +10,7 @@ import 'core/services/security_channel.dart';
 import 'features/lock/pin_screen.dart';
 import 'features/lock/password_screen.dart';
 import 'features/lock/fingerprint_screen.dart';
+import 'features/lock/access_method_screen.dart';
 import 'features/albums/albums_screen.dart';
 import 'features/camouflage/calculator_screen.dart';
 
@@ -51,9 +50,9 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   bool _loading = true;
   bool _hasPin = false;
   bool _camouflageMode = false;
+  bool _unlocked = false;
+  bool _choosingMethod = false;
   AuthMethod _authMethod = AuthMethod.pin;
-  StreamSubscription? _shakeSubscription;
-  DateTime? _lastShake;
 
   @override
   void initState() {
@@ -66,11 +65,10 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _shakeSubscription?.cancel();
     super.dispose();
   }
 
-  // ── Cerrar al minimizar ──────────────────────────────────
+  // ── Cerrar al minimizar / re-bloqueo al volver ───────────
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
     super.didChangeAppLifecycleState(state);
@@ -78,8 +76,17 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
       final closeOnMinimize =
           await PrefsService.instance.getCloseOnMinimize();
       if (closeOnMinimize) {
-        SystemNavigator.pop();
+        // SystemNavigator.pop() no siempre mata el proceso de forma
+        // confiable una vez la app ya está en segundo plano; exit(0) sí
+        // lo garantiza.
+        exit(0);
       }
+
+      // Se pide el método de acceso de nuevo siempre que la app vuelva
+      // del segundo plano, sin importar el switch de arriba: minimizar
+      // (o mandar la app a compartir, etc.) no debe dejar la sesión
+      // abierta para quien retome el teléfono después.
+      if (_unlocked) setState(() => _unlocked = false);
     }
   }
 
@@ -101,51 +108,47 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
       if (maxBrightness) {
         await ScreenBrightness().setScreenBrightness(1.0);
       }
-
-      // Agitar para cerrar
-      await _initShakeDetector();
     } catch (e) {
       debugPrint('Error aplicando settings: $e');
     }
   }
 
-  // ── Detector de agitación ────────────────────────────────
-  Future<void> _initShakeDetector() async {
-    final shakeToClose = await PrefsService.instance.getShakeToClose();
-    if (!shakeToClose) return;
-
-    _shakeSubscription =
-        accelerometerEventStream().listen((AccelerometerEvent event) {
-      final acceleration = sqrt(
-          event.x * event.x + event.y * event.y + event.z * event.z);
-      if (acceleration > 20) {
-        final now = DateTime.now();
-        if (_lastShake == null ||
-            now.difference(_lastShake!) >
-                const Duration(seconds: 2)) {
-          _lastShake = now;
-          SystemNavigator.pop();
-        }
-      }
-    });
-  }
-
   Future<void> _check() async {
-    final has = await _pinService.hasPin();
-    final camouflage = has && await PrefsService.instance.getCamouflageMode();
-    final authMethod = await PrefsService.instance.getAuthMethod();
-    setState(() {
-      _hasPin = has;
-      _camouflageMode = camouflage;
-      _authMethod = authMethod;
-      _loading = false;
-    });
+    // Sin try/catch acá, una excepción al leer el almacenamiento seguro
+    // (p. ej. clave de Keystore invalidada) dejaba _loading en true para
+    // siempre: la app parecía cargar sin fin. Si algo falla, se asume
+    // "sin PIN todavía" y se manda a configuración inicial.
+    try {
+      final has = await _pinService.hasPin();
+      final camouflage =
+          has && await PrefsService.instance.getCamouflageMode();
+      final authMethod = await PrefsService.instance.getAuthMethod();
+      setState(() {
+        _hasPin = has;
+        _camouflageMode = camouflage;
+        _authMethod = authMethod;
+        _loading = false;
+      });
+    } catch (e) {
+      debugPrint('Error verificando estado de acceso: $e');
+      if (mounted) {
+        setState(() {
+          _hasPin = false;
+          _camouflageMode = false;
+          _authMethod = AuthMethod.pin;
+          _loading = false;
+        });
+      }
+    }
   }
 
+  // No navega con el Navigator a propósito: si se reemplaza la ruta de
+  // AppEntry (pushReplacement) esta State se destruye, y con ella mueren
+  // el listener de "agitar para cerrar" y el observer de "cerrar al
+  // minimizar" — quedaban vivos solo mientras se veía la pantalla de
+  // bloqueo. Con setState, AppEntry sigue montado toda la sesión.
   void _goToGallery() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(builder: (_) => const AlbumsScreen()),
-    );
+    if (mounted) setState(() => _unlocked = true);
   }
 
   @override
@@ -158,23 +161,44 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
         ),
       );
     }
-    if (_camouflageMode) {
-      return const CalculatorScreen();
+
+    final Widget child;
+    if (_unlocked) {
+      child = const AlbumsScreen();
+    } else if (_camouflageMode) {
+      child = CalculatorScreen(onUnlocked: _goToGallery);
+    } else if (!_hasPin && !_choosingMethod) {
+      // Primera vez: el PIN siempre se crea primero (queda como respaldo
+      // de emergencia), y luego se ofrece elegir el método preferido.
+      child = PinScreen(
+        mode: PinMode.setup,
+        onSuccess: () => setState(() {
+          _hasPin = true;
+          _choosingMethod = true;
+        }),
+      );
+    } else if (_choosingMethod) {
+      child = AccessMethodScreen(
+        mode: AccessMethodScreenMode.onboarding,
+        onDone: _goToGallery,
+      );
+    } else {
+      child = switch (_authMethod) {
+        AuthMethod.password =>
+          PasswordScreen(mode: PasswordMode.unlock, onSuccess: _goToGallery),
+        AuthMethod.fingerprint =>
+          FingerprintScreen(onSuccess: _goToGallery),
+        AuthMethod.pin =>
+          PinScreen(mode: PinMode.unlock, onSuccess: _goToGallery),
+      };
     }
 
-    // Sin PIN aún (primera vez): siempre pasa por la configuración de PIN.
-    if (!_hasPin) {
-      return PinScreen(mode: PinMode.setup, onSuccess: _goToGallery);
-    }
-
-    switch (_authMethod) {
-      case AuthMethod.password:
-        return PasswordScreen(
-            mode: PasswordMode.unlock, onSuccess: _goToGallery);
-      case AuthMethod.fingerprint:
-        return FingerprintScreen(onSuccess: _goToGallery);
-      case AuthMethod.pin:
-        return PinScreen(mode: PinMode.unlock, onSuccess: _goToGallery);
-    }
+    return AnimatedSwitcher(
+      duration: const Duration(milliseconds: 350),
+      child: KeyedSubtree(
+        key: ValueKey(_unlocked ? 'gallery' : 'lock'),
+        child: child,
+      ),
+    );
   }
 }

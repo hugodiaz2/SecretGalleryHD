@@ -595,7 +595,7 @@ void _showDesignSheet() {
                   MaterialPageRoute(
                     builder: (_) => VideoPlayerScreen(video: photo),
                   ),
-                );
+                ).then((_) => _load());
               } else {
                 Navigator.push(
                   context,
@@ -731,7 +731,7 @@ void _showDesignSheet() {
                   MaterialPageRoute(
                     builder: (_) => VideoPlayerScreen(video: photo),
                   ),
-                );
+                ).then((_) => _load());
               } else {
                 Navigator.push(
                   context,

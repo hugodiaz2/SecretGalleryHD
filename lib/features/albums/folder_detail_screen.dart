@@ -861,7 +861,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                   MaterialPageRoute(
                     builder: (_) => VideoPlayerScreen(video: photo),
                   ),
-                );
+                ).then((_) => _load());
               } else {
                 final onlyPhotos = _filteredPhotos
                     .where((p) => !_isVideo(p))
@@ -1001,7 +1001,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                   MaterialPageRoute(
                     builder: (_) => VideoPlayerScreen(video: photo),
                   ),
-                );
+                ).then((_) => _load());
               } else {
                 final onlyPhotos = _filteredPhotos
                     .where((p) => !_isVideo(p))

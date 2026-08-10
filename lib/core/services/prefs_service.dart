@@ -9,7 +9,9 @@ class PrefsService {
   static final PrefsService instance = PrefsService._();
   PrefsService._();
 
-  final _storage = const FlutterSecureStorage();
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(resetOnError: true),
+  );
 
   // Keys
   static const _keyGrid = 'grid_view_type';
@@ -18,7 +20,6 @@ class PrefsService {
   static const _keyShowPhotoPreview = 'show_photo_preview';
   static const _keyShowFolderPreview = 'show_folder_preview';
   static const _keyCloseOnMinimize = 'close_on_minimize';
-  static const _keyShakeToClose = 'shake_to_close';
   static const _keyIntruderSelfie = 'intruder_selfie';
   static const _keyPreventScreenshot = 'prevent_screenshot';
   static const _keyKeepScreenOn = 'keep_screen_on';
@@ -79,9 +80,6 @@ class PrefsService {
   Future<bool> getCloseOnMinimize() => _getBool(_keyCloseOnMinimize);
   Future<void> saveCloseOnMinimize(bool v) =>
       _setBool(_keyCloseOnMinimize, v);
-
-  Future<bool> getShakeToClose() => _getBool(_keyShakeToClose);
-  Future<void> saveShakeToClose(bool v) => _setBool(_keyShakeToClose, v);
 
   Future<bool> getIntruderSelfie() => _getBool(_keyIntruderSelfie);
   Future<void> saveIntruderSelfie(bool v) =>
@@ -145,7 +143,6 @@ class PrefsService {
       'showPhotoPreview': await getShowPhotoPreview(),
       'showFolderPreview': await getShowFolderPreview(),
       'closeOnMinimize': await getCloseOnMinimize(),
-      'shakeToClose': await getShakeToClose(),
       'intruderSelfie': await getIntruderSelfie(),
       'preventScreenshot': await getPreventScreenshot(),
       'keepScreenOn': await getKeepScreenOn(),

@@ -25,6 +25,7 @@ class _FingerprintScreenState extends State<FingerprintScreen>
   final _pinService = PinService();
   bool _authenticating = false;
   bool _hasPinFallback = false;
+  bool _useFallbackPin = false;
   String _subtitle = 'Toca el sensor para continuar';
 
   late final AnimationController _pulseController;
@@ -83,18 +84,19 @@ class _FingerprintScreenState extends State<FingerprintScreen>
   }
 
   void _useFallback() {
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => PinScreen(
-          mode: PinMode.unlock,
-          onSuccess: widget.onSuccess,
-        ),
-      ),
-    );
+    setState(() => _useFallbackPin = true);
   }
 
   @override
   Widget build(BuildContext context) {
+    // Cambio de estado interno, no navegación: FingerprintScreen la
+    // renderiza AppEntry directamente (sin ruta propia), así que empujar
+    // una ruta nueva reemplazaría la de AppEntry y lo destruiría junto
+    // con el callback onSuccess pendiente.
+    if (_useFallbackPin) {
+      return PinScreen(mode: PinMode.unlock, onSuccess: widget.onSuccess);
+    }
+
     final size = MediaQuery.of(context).size;
     final accent = ThemeService.instance.accentColor;
 

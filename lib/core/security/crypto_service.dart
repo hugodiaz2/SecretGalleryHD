@@ -7,7 +7,9 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class CryptoService {
   static const _keyName = 'sg_aes_key';
-  final _storage = const FlutterSecureStorage();
+  final _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(resetOnError: true),
+  );
   Key? _key;
 
   Future<Key> _getKey() async {

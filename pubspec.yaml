@@ -47,8 +47,7 @@ dependencies:
   # Huella dactilar
   local_auth: ^2.3.0
 
-  # Sensores y utilidades
-  sensors_plus: ^7.1.0
+  # Utilidades
   wakelock_plus: ^1.2.8
   screen_brightness: ^2.1.11
 
