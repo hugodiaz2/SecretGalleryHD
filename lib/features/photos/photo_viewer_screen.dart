@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
@@ -383,6 +384,7 @@ class _VideoThumbPageState extends State<_VideoThumbPage> {
   @override
   Widget build(BuildContext context) {
     final name = (widget.photo['original_name'] ?? 'Video') as String;
+    final maxDim = MediaQuery.sizeOf(context).shortestSide * MediaQuery.devicePixelRatioOf(context);
 
     return GestureDetector(
       onTap: widget.onPlayTap,
@@ -396,6 +398,10 @@ class _VideoThumbPageState extends State<_VideoThumbPage> {
                   ? Image.memory(
                       _thumbBytes!,
                       fit: BoxFit.contain,
+                      cacheWidth: maxDim > 1200 ? 1200 : maxDim.round(),
+                      cacheHeight: maxDim > 1200 ? 1200 : maxDim.round(),
+                      filterQuality: FilterQuality.low,
+                      gaplessPlayback: true,
                     )
                   : Container(
                       color: const Color(0xFF1A1A2E),
@@ -464,6 +470,7 @@ class _ZoomablePhoto extends StatefulWidget {
 class _ZoomablePhotoState extends State<_ZoomablePhoto> {
   Uint8List? _bytes;
   bool _loading = true;
+  double _aspectRatio = 1.0;
 
   @override
   void initState() {
@@ -474,6 +481,29 @@ class _ZoomablePhotoState extends State<_ZoomablePhoto> {
   Future<void> _load() async {
     final bytes = await MediaService.instance
         .getPhotoBytes(widget.photo['encrypted_path']);
+
+    if (!mounted || bytes == null) {
+      if (mounted) {
+        setState(() {
+          _bytes = null;
+          _loading = false;
+        });
+      }
+      return;
+    }
+
+    try {
+      final codec = await ui.instantiateImageCodec(bytes);
+      final frame = await codec.getNextFrame();
+      final width = frame.image.width;
+      final height = frame.image.height;
+      if (width > 0 && height > 0) {
+        _aspectRatio = width / height;
+      }
+    } catch (_) {
+      _aspectRatio = 1.0;
+    }
+
     if (mounted) {
       setState(() {
         _bytes = bytes;
@@ -493,19 +523,34 @@ class _ZoomablePhotoState extends State<_ZoomablePhoto> {
           child: Icon(Icons.broken_image,
               color: Colors.white24, size: 64));
     }
-    return InteractiveViewer(
-      minScale: 0.8,
-      maxScale: 5.0,
-      child: Center(
-        child: Image.memory(
-          _bytes!,
-          fit: BoxFit.contain,
-          errorBuilder: (_, __, ___) => const Center(
-            child: Icon(Icons.broken_image,
-                color: Colors.white24, size: 64),
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final screenRatio = constraints.maxWidth / constraints.maxHeight;
+        final imageAspect = _aspectRatio > 0 ? _aspectRatio : screenRatio;
+
+        return InteractiveViewer(
+          minScale: 0.8,
+          maxScale: 5.0,
+          child: Center(
+            child: AspectRatio(
+              aspectRatio: imageAspect,
+              child: RepaintBoundary(
+                child: Image.memory(
+                  _bytes!,
+                  fit: BoxFit.contain,
+                  filterQuality: FilterQuality.high,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, __, ___) => const Center(
+                    child: Icon(Icons.broken_image,
+                        color: Colors.white24, size: 64),
+                  ),
+                ),
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
 }

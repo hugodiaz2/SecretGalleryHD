@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:encrypt/encrypt.dart';
+import 'package:pointycastle/digests/sha256.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -10,10 +12,23 @@ class CryptoService {
   final _storage = const FlutterSecureStorage(
     aOptions: AndroidOptions(resetOnError: true),
   );
-  Key? _key;
+  static Key? _key;
+  static Future<Key>? _loadingKey;
 
   Future<Key> _getKey() async {
     if (_key != null) return _key!;
+    return _loadingKey ??= _loadKey();
+  }
+
+  Future<Key> _loadKey() async {
+    try {
+      return await _readOrCreateKey();
+    } finally {
+      _loadingKey = null;
+    }
+  }
+
+  Future<Key> _readOrCreateKey() async {
     String? stored = await _storage.read(key: _keyName);
     if (stored == null) {
       final newKey = Key.fromSecureRandom(32);
@@ -28,34 +43,29 @@ class CryptoService {
   Future<String> encryptAndSave(File sourceFile, String originalName) async {
     final key = await _getKey();
     final iv = IV.fromSecureRandom(16);
-    final encrypter = Encrypter(AES(key));
-
-    final bytes = await sourceFile.readAsBytes();
-    final encrypted = encrypter.encryptBytes(bytes, iv: iv);
-
     final dir = await _getSecureDir();
-    final fileName = '${DateTime.now().millisecondsSinceEpoch}_$originalName.enc';
-    final destPath = p.join(dir.path, fileName);
-
-    // Guardamos IV (16 bytes) + datos encriptados
-    final combined = Uint8List(16 + encrypted.bytes.length);
-    combined.setRange(0, 16, iv.bytes);
-    combined.setRange(16, combined.length, encrypted.bytes);
-
-    await File(destPath).writeAsBytes(combined);
-    return destPath;
+    final fileName =
+        '${DateTime.now().microsecondsSinceEpoch}_${iv.base16}_${p.basename(originalName)}.enc';
+    return compute(_encryptOnWorker, (
+      source: sourceFile.path,
+      destination: p.join(dir.path, fileName),
+      key: key.bytes,
+      iv: iv.bytes,
+    ));
   }
 
   Future<Uint8List> decryptFile(String encryptedPath) async {
     final key = await _getKey();
-    final combined = await File(encryptedPath).readAsBytes();
+    return compute(_decryptOnWorker, (path: encryptedPath, key: key.bytes));
+  }
 
-    final iv = IV(combined.sublist(0, 16));
-    final encryptedBytes = combined.sublist(16);
-
-    final encrypter = Encrypter(AES(key));
-    final encrypted = Encrypted(encryptedBytes);
-    return Uint8List.fromList(encrypter.decryptBytes(encrypted, iv: iv));
+  /// Decrypt, hash and optionally stage an export in one worker. Only the
+  /// digest returns to the UI isolate, never the full plaintext image.
+  Future<String> prepareExportFile(String encryptedPath,
+      {String? destinationPath}) async {
+    final key = await _getKey();
+    return compute(_prepareExportOnWorker,
+        (path: encryptedPath, destination: destinationPath, key: key.bytes));
   }
 
   Future<Directory> _getSecureDir() async {
@@ -79,7 +89,57 @@ class CryptoService {
 
   /// Reemplaza la clave AES actual por una restaurada de un respaldo.
   Future<void> setRawKeyBase64(String base64Key) async {
+    final restoredKey = Key.fromBase64(base64Key);
+    if (restoredKey.bytes.length != 32) throw ArgumentError('Invalid AES key');
+    if (_loadingKey != null) await _loadingKey;
     await _storage.write(key: _keyName, value: base64Key);
     _key = Key.fromBase64(base64Key);
   }
+}
+
+// These workers receive only paths and key bytes. Platform plugins remain on
+// the main isolate; file IO and CPU-heavy AES run away from animation frames.
+String _encryptOnWorker(
+    ({String source, String destination, Uint8List key, Uint8List iv}) job) {
+  final bytes = File(job.source).readAsBytesSync();
+  final encrypted =
+      Encrypter(AES(Key(job.key))).encryptBytes(bytes, iv: IV(job.iv));
+  final combined = Uint8List(16 + encrypted.bytes.length);
+  combined.setRange(0, 16, job.iv);
+  combined.setRange(16, combined.length, encrypted.bytes);
+  final output = File(job.destination);
+  try {
+    output.writeAsBytesSync(combined, flush: true);
+    return job.destination;
+  } catch (_) {
+    try {
+      if (output.existsSync()) output.deleteSync();
+    } catch (_) {}
+    rethrow;
+  }
+}
+
+Uint8List _decryptOnWorker(({String path, Uint8List key}) job) {
+  final combined = File(job.path).readAsBytesSync();
+  if (combined.length < 16)
+    throw const FormatException('Invalid encrypted file');
+  final cipher = Encrypter(AES(Key(job.key)));
+  return Uint8List.fromList(cipher.decryptBytes(
+    Encrypted(Uint8List.sublistView(combined, 16)),
+    iv: IV(Uint8List.sublistView(combined, 0, 16)),
+  ));
+}
+
+String _prepareExportOnWorker(
+    ({String path, String? destination, Uint8List key}) job) {
+  final bytes = _decryptOnWorker((path: job.path, key: job.key));
+  if (bytes.isEmpty) throw StateError('El archivo privado está vacío.');
+  final digest = SHA256Digest()
+      .process(bytes)
+      .map((b) => b.toRadixString(16).padLeft(2, '0'))
+      .join();
+  if (job.destination != null) {
+    File(job.destination!).writeAsBytesSync(bytes, flush: true);
+  }
+  return digest;
 }

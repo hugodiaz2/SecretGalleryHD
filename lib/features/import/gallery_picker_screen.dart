@@ -28,17 +28,22 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
 
   final Set<String> _selectedIds = {};
   final Map<String, AssetEntity> _assetMap = {};
+  final Map<String, Future<Widget>> _thumbCache = {};
+  final Map<String, Future<Widget>> _albumThumbCache = {};
 
   bool _importing = false;
   int _importCurrent = 0;
   int _importTotal = 0;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     _tabController.addListener(() {
-      if (_tabController.indexIsChanging) return;
+      if (_tabController.indexIsChanging ||
+          _activeTab == _tabController.index ||
+          _importing) return;
       setState(() {
         _activeTab = _tabController.index;
         _currentAlbum = null;
@@ -58,111 +63,200 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
     super.dispose();
   }
 
+  void _showError(Object error) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo completar la operación: $error')));
+  }
+
   Future<void> _loadAlbums() async {
-    final ok = await _media.requestPermission();
-    if (!ok) {
-      if (mounted) Navigator.pop(context);
-      return;
+    final generation = ++_loadGeneration;
+    try {
+      final ok = await _media.requestPermission();
+      if (!mounted || generation != _loadGeneration) return;
+      if (!ok) {
+        setState(() => _loadingAlbums = false);
+        _showError(
+            'Se necesita acceso a la galería. Puedes habilitarlo en Ajustes.');
+        return;
+      }
+      final type = _activeTab == 0 ? RequestType.image : RequestType.video;
+      final albums = await _media.getGalleryAlbums(type: type);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _albums = albums;
+        _albumThumbCache.clear();
+        _loadingAlbums = false;
+      });
+    } catch (e) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loadingAlbums = false);
+      _showError(e);
     }
-    final type =
-        _activeTab == 0 ? RequestType.image : RequestType.video;
-    final albums = await _media.getGalleryAlbums(type: type);
-    setState(() {
-      _albums = albums;
-      _loadingAlbums = false;
-    });
   }
 
   Future<void> _openAlbum(AssetPathEntity album) async {
+    final generation = ++_loadGeneration;
     setState(() {
       _currentAlbum = album;
       _loadingAssets = true;
       _assets = [];
+      _selectedIds.clear();
+      _assetMap.clear();
+      _thumbCache.clear();
     });
-    final assets = await _media.getAlbumAssets(album);
-    for (final a in assets) {
-      _assetMap[a.id] = a;
+    try {
+      final assets = await _media.getAlbumAssets(album);
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() {
+        _assets = assets;
+        _assetMap.addEntries(assets.map((a) => MapEntry(a.id, a)));
+        _loadingAssets = false;
+      });
+    } catch (e) {
+      if (!mounted || generation != _loadGeneration) return;
+      setState(() => _loadingAssets = false);
+      _showError(e);
     }
+  }
+
+  void _toggleSelectAll() {
+    if (_currentAlbum == null || _assets.isEmpty) return;
     setState(() {
-      _assets = assets;
-      _loadingAssets = false;
+      final allSelected = _selectedIds.length == _assets.length;
+      if (allSelected) {
+        _selectedIds.clear();
+      } else {
+        _selectedIds
+          ..clear()
+          ..addAll(_assets.map((a) => a.id));
+      }
     });
   }
 
   Future<void> _import() async {
-    if (_selectedIds.isEmpty) return;
+    if (_importing || _selectedIds.isEmpty) return;
     final selected = _selectedIds
         .map((id) => _assetMap[id])
         .whereType<AssetEntity>()
         .toList();
-
     setState(() {
       _importing = true;
       _importTotal = selected.length;
       _importCurrent = 0;
     });
-
-    await _media.importAssets(
-      assets: selected,
-      folderId: widget.folderId,
-      onProgress: (cur, total) {
-        if (mounted) setState(() => _importCurrent = cur);
-      },
-    );
-
-    if (mounted) Navigator.pop(context, true);
-  }
-
-  Future<Widget> _buildThumb(AssetEntity asset) async {
     try {
-      final data = await asset.thumbnailDataWithSize(
-          const ThumbnailSize(300, 300));
-      if (data == null) {
-        return const ColoredBox(
-            color: Color(0xFF2A2A2A),
-            child: Icon(Icons.image, color: Colors.white24));
+      final result = await _media.importAssets(
+          assets: selected,
+          folderId: widget.folderId,
+          onProgress: (current, total) {
+            if (mounted) {
+              setState(() {
+                _importCurrent = current;
+                _importTotal = total;
+              });
+            }
+          });
+      if (!mounted) return;
+      // Successful imports close this route. The caller reloads the private
+      // gallery; reloading the public album here just delays that navigation.
+      if (result.completed.isEmpty) {
+        final album = _currentAlbum;
+        if (album != null) await _openAlbum(album);
+        if (!mounted) return;
       }
-      return Image.memory(data, fit: BoxFit.cover);
-    } catch (_) {
-      return const ColoredBox(
-          color: Color(0xFF2A2A2A),
-          child: Icon(Icons.broken_image, color: Colors.white24));
+      setState(() => _importing = false);
+      if (result.failed.isNotEmpty || result.publicRetained.isNotEmpty) {
+        final messages = <String>[
+          if (result.failed.isNotEmpty)
+            'No se pudieron ocultar algunos archivos.',
+          if (result.publicRetained.isNotEmpty)
+            'Algunos originales siguen en la galería pública. Puedes volver a intentar eliminarlos.',
+        ];
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(messages.join(' '))),
+        );
+      }
+      if (mounted && result.completed.isNotEmpty) Navigator.pop(context, true);
+    } catch (e) {
+      _showError(e);
+    } finally {
+      if (mounted) setState(() => _importing = false);
     }
   }
 
-  Future<Widget> _buildAlbumThumb(AssetPathEntity album) async {
-    try {
-      final assets = await album.getAssetListRange(start: 0, end: 1);
-      if (assets.isEmpty) {
+  Future<Widget> _buildThumb(AssetEntity asset) {
+    return _thumbCache.putIfAbsent(asset.id, () async {
+      try {
+        final data =
+            await asset.thumbnailDataWithSize(const ThumbnailSize(180, 180));
+        if (data == null) {
+          return const ColoredBox(
+              color: Color(0xFF2A2A2A),
+              child: Icon(Icons.image, color: Colors.white24));
+        }
+        return RepaintBoundary(
+          child: Image.memory(
+            data,
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.low,
+            gaplessPlayback: true,
+          ),
+        );
+      } catch (_) {
         return const ColoredBox(
             color: Color(0xFF2A2A2A),
-            child: Icon(Icons.photo_album,
-                color: Colors.white24, size: 40));
+            child: Icon(Icons.broken_image, color: Colors.white24));
       }
-      final data = await assets.first
-          .thumbnailDataWithSize(const ThumbnailSize(300, 300));
-      if (data == null) {
+    });
+  }
+
+  Future<Widget> _buildAlbumThumb(AssetPathEntity album) {
+    return _albumThumbCache.putIfAbsent(album.id, () async {
+      try {
+        final assets = await album.getAssetListRange(start: 0, end: 1);
+        if (assets.isEmpty) {
+          return const ColoredBox(
+              color: Color(0xFF2A2A2A),
+              child: Icon(Icons.photo_album, color: Colors.white24, size: 40));
+        }
+        final data = await assets.first
+            .thumbnailDataWithSize(const ThumbnailSize(180, 180));
+        if (data == null) {
+          return const ColoredBox(color: Color(0xFF2A2A2A));
+        }
+        return RepaintBoundary(
+          child: Image.memory(
+            data,
+            fit: BoxFit.cover,
+            filterQuality: FilterQuality.low,
+            gaplessPlayback: true,
+          ),
+        );
+      } catch (_) {
         return const ColoredBox(color: Color(0xFF2A2A2A));
       }
-      return Image.memory(data, fit: BoxFit.cover);
-    } catch (_) {
-      return const ColoredBox(color: Color(0xFF2A2A2A));
-    }
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     if (_importing) {
-      return _ImportingOverlay(
-          current: _importCurrent, total: _importTotal);
+      return PopScope(
+          canPop: false,
+          child:
+              _ImportingOverlay(current: _importCurrent, total: _importTotal));
     }
 
     return WillPopScope(
       onWillPop: () async {
         if (_currentAlbum != null) {
           setState(() {
+            ++_loadGeneration;
             _currentAlbum = null;
             _assets = [];
+            _selectedIds.clear();
+            _assetMap.clear();
           });
           return false;
         }
@@ -177,8 +271,11 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
             onPressed: () {
               if (_currentAlbum != null) {
                 setState(() {
+                  ++_loadGeneration;
                   _currentAlbum = null;
                   _assets = [];
+                  _selectedIds.clear();
+                  _assetMap.clear();
                 });
               } else {
                 Navigator.pop(context);
@@ -193,15 +290,22 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                 : (_activeTab == 0
                     ? 'Selecciona álbum de fotos'
                     : 'Selecciona álbum de videos'),
-            style: GoogleFonts.poppins(
-                color: Colors.white, fontSize: 15),
+            style: GoogleFonts.poppins(color: Colors.white, fontSize: 15),
           ),
           actions: [
+            if (_currentAlbum != null)
+              IconButton(
+                tooltip: _selectedIds.length == _assets.length
+                    ? 'Deseleccionar todo'
+                    : 'Seleccionar todo',
+                onPressed: _assets.isEmpty ? null : _toggleSelectAll,
+                icon: const Icon(Icons.select_all, color: Colors.white),
+              ),
             if (_selectedIds.isNotEmpty)
               TextButton(
                 onPressed: _import,
                 child: Text(
-                  'Importar (${_selectedIds.length})',
+                  'Ocultar (${_selectedIds.length})',
                   style: GoogleFonts.poppins(
                     color: Colors.blue,
                     fontWeight: FontWeight.w600,
@@ -231,9 +335,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                 )
               : null,
         ),
-        body: _currentAlbum == null
-            ? _buildAlbumsGrid()
-            : _buildAssetsGrid(),
+        body: _currentAlbum == null ? _buildAlbumsGrid() : _buildAssetsGrid(),
       ),
     );
   }
@@ -241,8 +343,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
   // ── Grid de álbumes ──────────────────────────────────────
   Widget _buildAlbumsGrid() {
     if (_loadingAlbums) {
-      return const Center(
-          child: CircularProgressIndicator(color: Colors.blue));
+      return const Center(child: CircularProgressIndicator(color: Colors.blue));
     }
     if (_albums.isEmpty) {
       return Center(
@@ -291,8 +392,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                   future: _buildAlbumThumb(album),
                   builder: (ctx, snap) {
                     if (snap.connectionState != ConnectionState.done) {
-                      return const ColoredBox(
-                          color: Color(0xFF2A2A2A));
+                      return const ColoredBox(color: Color(0xFF2A2A2A));
                     }
                     return snap.data ??
                         const ColoredBox(color: Color(0xFF2A2A2A));
@@ -303,8 +403,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                   left: 0,
                   right: 0,
                   child: Container(
-                    padding:
-                        const EdgeInsets.fromLTRB(10, 24, 10, 10),
+                    padding: const EdgeInsets.fromLTRB(10, 24, 10, 10),
                     decoration: const BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.bottomCenter,
@@ -332,8 +431,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                             Text(
                               '$count ${_activeTab == 0 ? 'foto${count == 1 ? '' : 's'}' : 'video${count == 1 ? '' : 's'}'}',
                               style: GoogleFonts.poppins(
-                                  color: Colors.white60,
-                                  fontSize: 11),
+                                  color: Colors.white60, fontSize: 11),
                             ),
                           ],
                         );
@@ -367,8 +465,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
   // ── Grid de assets (fotos/videos) ────────────────────────
   Widget _buildAssetsGrid() {
     if (_loadingAssets) {
-      return const Center(
-          child: CircularProgressIndicator(color: Colors.blue));
+      return const Center(child: CircularProgressIndicator(color: Colors.blue));
     }
     if (_assets.isEmpty) {
       return Center(
@@ -383,8 +480,9 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
 
     return GridView.builder(
       padding: const EdgeInsets.all(2),
+      cacheExtent: 400,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
+        crossAxisCount: 5,
         mainAxisSpacing: 2,
         crossAxisSpacing: 2,
       ),
@@ -411,8 +509,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                 future: _buildThumb(asset),
                 builder: (ctx, snap) {
                   if (snap.connectionState != ConnectionState.done) {
-                    return const ColoredBox(
-                        color: Color(0xFF2A2A2A));
+                    return const ColoredBox(color: Color(0xFF2A2A2A));
                   }
                   return snap.data ??
                       const ColoredBox(color: Color(0xFF2A2A2A));
@@ -420,8 +517,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
               ),
 
               // Overlay selección
-              if (isSelected)
-                Container(color: Colors.blue.withOpacity(0.4)),
+              if (isSelected) Container(color: Colors.blue.withOpacity(0.4)),
 
               // Duración del video
               if (isVideo)
@@ -439,9 +535,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                           color: Colors.white,
                           fontSize: 10,
                           fontWeight: FontWeight.w600,
-                          shadows: [
-                            Shadow(color: Colors.black, blurRadius: 4)
-                          ],
+                          shadows: [Shadow(color: Colors.black, blurRadius: 4)],
                         ),
                       ),
                     ],
@@ -458,12 +552,10 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: isSelected ? Colors.blue : Colors.black45,
-                    border: Border.all(
-                        color: Colors.white, width: 1.5),
+                    border: Border.all(color: Colors.white, width: 1.5),
                   ),
                   child: isSelected
-                      ? const Icon(Icons.check,
-                          color: Colors.white, size: 15)
+                      ? const Icon(Icons.check, color: Colors.white, size: 15)
                       : null,
                 ),
               ),
@@ -510,7 +602,7 @@ class _ImportingOverlayState extends State<_ImportingOverlay>
   void initState() {
     super.initState();
     _pulseController = AnimationController(
-      duration: const Duration(milliseconds: 1300),
+      duration: const Duration(milliseconds: 800),
       vsync: this,
     )..repeat(reverse: true);
   }
@@ -524,8 +616,7 @@ class _ImportingOverlayState extends State<_ImportingOverlay>
   @override
   Widget build(BuildContext context) {
     final phrase = _phrases[widget.current % _phrases.length];
-    final progress =
-        widget.total == 0 ? null : widget.current / widget.total;
+    final progress = widget.total == 0 ? null : widget.current / widget.total;
 
     return Scaffold(
       backgroundColor: const Color(0xFF121212),
@@ -584,12 +675,11 @@ class _ImportingOverlayState extends State<_ImportingOverlay>
             ),
             const SizedBox(height: 16),
             AnimatedSwitcher(
-              duration: const Duration(milliseconds: 300),
+              duration: const Duration(milliseconds: 180),
               child: Text(
                 phrase,
                 key: ValueKey(phrase),
-                style:
-                    GoogleFonts.poppins(color: Colors.white38, fontSize: 12),
+                style: GoogleFonts.poppins(color: Colors.white38, fontSize: 12),
               ),
             ),
           ],

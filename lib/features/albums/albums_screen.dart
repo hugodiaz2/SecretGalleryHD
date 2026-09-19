@@ -42,6 +42,8 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   bool _selectingPhotos = false;
   final Set<int> _selectedPhotoIds = {};
 
+  bool _fabOpen = false;
+
   bool get _isSelecting => _selectingFolders || _selectingPhotos;
 
   bool _narrowBorders = false;
@@ -367,6 +369,22 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         if (_selectedFolderIds.isEmpty) _selectingFolders = false;
       } else {
         _selectedFolderIds.add(id);
+      }
+    });
+  }
+
+  void _selectAllCurrentMode() {
+    setState(() {
+      if (_selectingFolders) {
+        _selectedFolderIds
+          ..clear()
+          ..addAll(_folders.map((f) => f['id'] as int));
+        return;
+      }
+      if (_selectingPhotos) {
+        _selectedPhotoIds
+          ..clear()
+          ..addAll(_photos.map((p) => p['id'] as int));
       }
     });
   }
@@ -814,7 +832,9 @@ void _showDesignSheet() {
         backgroundColor: context.colors.bg,
         appBar: AppBar(
           backgroundColor: context.colors.bg,
+          surfaceTintColor: Colors.transparent,
           elevation: 0,
+          shadowColor: Colors.transparent,
           leading: _isSelecting
               ? IconButton(
                   icon: Icon(Icons.close, color: context.colors.textPrimary),
@@ -826,7 +846,7 @@ void _showDesignSheet() {
                   }),
                 )
               : Padding(
-                  padding: EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(12),
                   child: Icon(Icons.lock_rounded,
                       color: context.colors.textPrimary, size: 26),
                 ),
@@ -865,8 +885,7 @@ void _showDesignSheet() {
               ),
               IconButton(
                 icon: Icon(Icons.select_all, color: context.colors.textPrimary),
-                onPressed: () => setState(() => _selectedFolderIds
-                    .addAll(_folders.map((f) => f['id'] as int))),
+                onPressed: _selectAllCurrentMode,
               ),
               IconButton(
                 icon: const Icon(Icons.delete_outline,
@@ -905,8 +924,7 @@ void _showDesignSheet() {
               ),
               IconButton(
                 icon: Icon(Icons.select_all, color: context.colors.textPrimary),
-                onPressed: () => setState(() => _selectedPhotoIds
-                    .addAll(_photos.map((p) => p['id'] as int))),
+                onPressed: _selectAllCurrentMode,
               ),
               IconButton(
                 icon: const Icon(Icons.delete_outline,
@@ -953,60 +971,197 @@ void _showDesignSheet() {
         ),
         body: _folders.isEmpty && _photos.isEmpty
             ? Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.folder_off_outlined,
-                        size: 72, color: context.colors.textGhost),
-                    const SizedBox(height: 16),
-                    Text(
-                      _search.isEmpty
-                          ? 'Sin contenido\nToca + para crear una carpeta'
-                          : 'Sin resultados para "$_search"',
-                      textAlign: TextAlign.center,
-                      style: GoogleFonts.poppins(
-                          color: context.colors.textFaint, fontSize: 14),
-                    ),
-                  ],
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 26),
+                  margin: const EdgeInsets.symmetric(horizontal: 28),
+                  decoration: BoxDecoration(
+                    color: context.colors.surface,
+                    border: Border.all(color: context.colors.border, width: 1),
+                    borderRadius: BorderRadius.circular(24),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.06),
+                        blurRadius: 18,
+                        offset: const Offset(0, 10),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Container(
+                        width: 82,
+                        height: 82,
+                        decoration: BoxDecoration(
+                          color: context.colors.surfaceHigh,
+                          borderRadius: BorderRadius.circular(22),
+                        ),
+                        child: Icon(Icons.folder_off_outlined,
+                            size: 42, color: context.colors.textGhost),
+                      ),
+                      const SizedBox(height: 16),
+                      Text(
+                        _search.isEmpty
+                            ? 'Sin contenido\nToca + para crear una carpeta'
+                            : 'Sin resultados para "$_search"',
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                            color: context.colors.textFaint, fontSize: 14),
+                      ),
+                    ],
+                  ),
                 ),
               )
-            : _viewType == GridViewType.list
-                ? _buildListView()
-                : _buildGridView(),
+            : Container(
+                decoration: BoxDecoration(
+                  color: context.colors.bg,
+                ),
+                child: _viewType == GridViewType.list
+                    ? _buildListView()
+                    : _buildGridView(),
+              ),
         floatingActionButton: _isSelecting
             ? null
             : Column(
                 mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
-                  FloatingActionButton(
-                    heroTag: 'main_add_photo',
-                    onPressed: () async {
-                      final r = await Navigator.push<bool>(
-                        context,
-                        MaterialPageRoute(
-                          builder: (_) =>
-                              const GalleryPickerScreen(folderId: 0),
-                        ),
-                      );
-                      if (r == true) _load();
-                    },
-                    backgroundColor: Theme.of(context).colorScheme.primary,
-                    mini: true,
-                    child: const Icon(
-                        Icons.add_photo_alternate_outlined,
+                  if (_fabOpen) ...[
+                    AnimatedScale(
+                      duration: const Duration(milliseconds: 180),
+                      scale: 1,
+                      curve: Curves.easeOutBack,
+                      child: _MiniFab(
+                        icon: Icons.create_new_folder_outlined,
+                        color: Colors.black,
+                        background: Colors.white,
+                        label: 'Carpeta',
+                        onTap: () {
+                          setState(() => _fabOpen = false);
+                          _createFolder();
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    AnimatedScale(
+                      duration: const Duration(milliseconds: 220),
+                      scale: 1,
+                      curve: Curves.easeOutBack,
+                      child: _MiniFab(
+                        icon: Icons.add_photo_alternate_outlined,
                         color: Colors.white,
-                        size: 20),
-                  ),
-                  const SizedBox(height: 10),
-                  FloatingActionButton(
-                    heroTag: 'main_add_folder',
-                    onPressed: _createFolder,
-                    backgroundColor: Colors.white,
-                    child: const Icon(Icons.create_new_folder_outlined,
-                        color: Colors.black, size: 26),
+                        background: Theme.of(context).colorScheme.primary,
+                        label: 'Foto',
+                        onTap: () async {
+                          setState(() => _fabOpen = false);
+                          final r = await Navigator.push<bool>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const GalleryPickerScreen(folderId: 0),
+                            ),
+                          );
+                          if (r == true) _load();
+                        },
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  AnimatedContainer(
+                    duration: const Duration(milliseconds: 200),
+                    width: _fabOpen ? 66 : 62,
+                    height: _fabOpen ? 66 : 62,
+                    decoration: BoxDecoration(
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(
+                          color: Theme.of(context).colorScheme.primary.withOpacity(0.35),
+                          blurRadius: 20,
+                          spreadRadius: 0.5,
+                        ),
+                      ],
+                    ),
+                    child: FloatingActionButton(
+                      heroTag: 'main_fab_toggle',
+                      onPressed: () => setState(() => _fabOpen = !_fabOpen),
+                      backgroundColor: Theme.of(context).colorScheme.primary,
+                      shape: const CircleBorder(),
+                      elevation: 0,
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 180),
+                        transitionBuilder: (child, animation) => ScaleTransition(
+                          scale: animation,
+                          child: child,
+                        ),
+                        child: Icon(
+                          _fabOpen ? Icons.close : Icons.add,
+                          key: ValueKey(_fabOpen),
+                          color: Colors.white,
+                          size: 30,
+                        ),
+                      ),
+                    ),
                   ),
                 ],
               ),
+      ),
+    );
+  }
+}
+
+class _MiniFab extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final Color background;
+  final String label;
+  final VoidCallback onTap;
+
+  const _MiniFab({
+    required this.icon,
+    required this.color,
+    required this.background,
+    required this.label,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: background,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.white.withOpacity(0.14), width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.12),
+                blurRadius: 12,
+                offset: const Offset(0, 8),
+              ),
+            ],
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, color: color, size: 18),
+              const SizedBox(width: 8),
+              Text(
+                label,
+                style: GoogleFonts.poppins(
+                  color: color,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }

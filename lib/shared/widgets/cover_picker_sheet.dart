@@ -195,7 +195,7 @@ class _PhotoThumbState extends State<_PhotoThumb> {
     final future = _isVideo
         ? MediaService.instance.getVideoThumbnail(
             path, widget.photo['original_name'] ?? 'video.mp4')
-        : MediaService.instance.getPhotoBytes(path);
+        : MediaService.instance.getPhotoThumbnail(path);
     future.then((b) {
       if (mounted) setState(() => _bytes = b);
     });

@@ -1,5 +1,8 @@
 import 'dart:io';
-import 'dart:typed_data';
+import 'dart:ui' as ui;
+import 'thumbnail_cache.dart';
+import 'device_gallery.dart';
+import 'media_transfer_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:photo_manager/photo_manager.dart';
 import 'package:path_provider/path_provider.dart';
@@ -14,9 +17,26 @@ class MediaService {
 
   final _crypto = CryptoService();
   final _db = DBHelper.instance;
+  final _transfers = MediaTransferService(
+    crypto: CryptoService(),
+    repository: DBHelper.instance,
+    gallery: DeviceGallery(),
+    temporaryDirectory: getTemporaryDirectory,
+  );
+  final Map<String, Uint8List> _photoBytesCache = {};
+  final _thumbnails = ThumbnailCache();
+
+  static const int _maxOriginalBytes = 32 * 1024 * 1024;
+  int _originalBytes = 0;
 
   static const _videoExtensions = [
-    'mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'
+    'mp4',
+    'mov',
+    'avi',
+    'mkv',
+    'webm',
+    '3gp',
+    'flv'
   ];
 
   /// Detecta si un archivo encriptado es un video a partir de su propio
@@ -32,13 +52,7 @@ class MediaService {
     return _videoExtensions.contains(ext);
   }
 
-  Future<bool> requestPermission() async {
-    final permission = await PhotoManager.requestPermissionExtend();
-    if (!permission.isAuth && !permission.hasAccess) {
-      await PhotoManager.openSetting();
-    }
-    return permission.isAuth || permission.hasAccess;
-  }
+  Future<bool> requestPermission() => DeviceGallery().requestAccess();
 
   // ── Álbumes de galería ───────────────────────────────────
   Future<List<AssetPathEntity>> getGalleryAlbums({
@@ -64,20 +78,24 @@ class MediaService {
       ),
     );
 
-    albums.sort((a, b) {
+    final filtered =
+        {for (final album in albums) album.id: album}.values.toList();
+
+    filtered.sort((a, b) {
       if (a.isAll) return -1;
       if (b.isAll) return 1;
       return a.name.compareTo(b.name);
     });
 
-    return albums;
+    return filtered;
   }
 
   // ── Assets de un álbum ───────────────────────────────────
   Future<List<AssetEntity>> getAlbumAssets(AssetPathEntity album) async {
     final count = await album.assetCountAsync;
     if (count == 0) return [];
-    return await album.getAssetListRange(start: 0, end: count);
+    return MediaTransferService.uniqueAssets(
+        await album.getAssetListRange(start: 0, end: count));
   }
 
   // ── Todas las imágenes ───────────────────────────────────
@@ -90,64 +108,23 @@ class MediaService {
     if (albums.isEmpty) return [];
     final count = await albums.first.assetCountAsync;
     if (count == 0) return [];
-    return await albums.first.getAssetListRange(start: 0, end: count);
+    final assets = await albums.first.getAssetListRange(start: 0, end: count);
+    return MediaTransferService.uniqueAssets(assets);
   }
 
   // ── Importar assets al vault ─────────────────────────────
-  Future<void> importAssets({
+  Future<TransferResult> importAssets({
     required List<AssetEntity> assets,
     required int folderId,
     required void Function(int current, int total) onProgress,
   }) async {
     await _ensureNomedia();
-
-    // Se acumulan los IDs y se borran todos juntos al final: Android pide
-    // confirmación al usuario para borrar medios que no le pertenecen a la
-    // app, y si se llama deleteWithIds() en cada vuelta del loop esa
-    // confirmación aparece una vez POR FOTO. Con un solo borrado en lote
-    // el sistema solo pregunta una vez para todo el import.
-    final idsToDelete = <String>[];
-
-    for (int i = 0; i < assets.length; i++) {
-      final asset = assets[i];
-      final file = await asset.originFile;
-      if (file == null) {
-        onProgress(i + 1, assets.length);
-        continue;
-      }
-
-      try {
-        final encPath = await _crypto.encryptAndSave(
-            file, asset.title ?? 'file_$i');
-
-        await _db.insertPhoto({
-          'folder_id': folderId,
-          'original_name': asset.title ?? 'file_$i',
-          'encrypted_path': encPath,
-          'original_path': file.path,
-          'date_added': DateTime.now().millisecondsSinceEpoch,
-        });
-
-        idsToDelete.add(asset.id);
-      } catch (e) {
-        debugPrint('Error importando archivo $i: $e');
-      }
-
-      onProgress(i + 1, assets.length);
-    }
-
-    if (idsToDelete.isNotEmpty) {
-      try {
-        await PhotoManager.editor.deleteWithIds(idsToDelete);
-      } catch (e) {
-        debugPrint('Error eliminando originales de la galería: $e');
-      }
-    }
-
-    await PhotoManager.clearFileCache();
+    final result = await _transfers.importAssets(
+        assets: assets, folderId: folderId, onProgress: onProgress);
+    clearThumbnailCaches();
+    return result;
   }
 
-  // ── Nomedia ──────────────────────────────────────────────
   Future<void> _ensureNomedia() async {
     final dir = await _getVaultDir();
     final nomedia = File(p.join(dir.path, '.nomedia'));
@@ -163,10 +140,37 @@ class MediaService {
     return dir;
   }
 
+  void clearThumbnailCaches() {
+    _photoBytesCache.clear();
+    _originalBytes = 0;
+    _thumbnails.clear();
+  }
+
   // ── Obtener bytes desencriptados ─────────────────────────
   Future<Uint8List?> getPhotoBytes(String encryptedPath) async {
+    final key = encryptedPath;
+    final cached = _photoBytesCache.remove(key);
+    if (cached != null) {
+      _photoBytesCache[key] = cached;
+      return cached;
+    }
+
     try {
-      return await _crypto.decryptFile(encryptedPath);
+      final bytes = await _crypto.decryptFile(encryptedPath);
+      if (bytes.lengthInBytes <= _maxOriginalBytes) {
+        final old = _photoBytesCache.remove(key);
+        if (old != null) _originalBytes -= old.lengthInBytes;
+        while (_photoBytesCache.isNotEmpty &&
+            (_originalBytes + bytes.lengthInBytes > _maxOriginalBytes ||
+                _photoBytesCache.length >= 4)) {
+          _originalBytes -= _photoBytesCache
+              .remove(_photoBytesCache.keys.first)!
+              .lengthInBytes;
+        }
+        _photoBytesCache[key] = bytes;
+        _originalBytes += bytes.lengthInBytes;
+      }
+      return bytes;
     } catch (_) {
       return null;
     }
@@ -199,72 +203,63 @@ class MediaService {
   }
 
   // ── Desbloquear y restaurar a galería ───────────────────
-  static const _unlockRelativePath = 'DCIM/Secret Gallery HD';
-
-  bool _isVideoFile(String name) {
-    final ext = name.split('.').last.toLowerCase();
-    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext);
+  Future<TransferResult> unlockPhotos(List<Map<String, dynamic>> photos) async {
+    final result = await _transfers.unlockPhotos(photos);
+    clearThumbnailCaches();
+    return result;
   }
 
-  Future<void> unlockPhotos(List<Map<String, dynamic>> photos) async {
-    for (final photo in photos) {
-      try {
-        final bytes =
-            await _crypto.decryptFile(photo['encrypted_path']);
+  Uint8List? cachedThumbnail(String path, {required bool video}) =>
+      _thumbnails.peek('${video ? 'video' : 'photo'}:$path');
 
-        final dir = Directory('/storage/emulated/0/$_unlockRelativePath');
-        if (!await dir.exists()) await dir.create(recursive: true);
-
-        final fileName = photo['original_name'] ??
-            'file_${DateTime.now().millisecondsSinceEpoch}.jpg';
-        final destFile = File('${dir.path}/$fileName');
-        await destFile.writeAsBytes(bytes);
-
-        if (_isVideoFile(fileName)) {
-          await PhotoManager.editor.saveVideo(
-            destFile,
-            title: fileName,
-            relativePath: _unlockRelativePath,
+  Future<Uint8List?> getPhotoThumbnail(String encryptedPath,
+          {bool Function()? isNeeded}) =>
+      _thumbnails.load('photo:$encryptedPath', () async {
+        final bytes = await _crypto.decryptFile(encryptedPath);
+        final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+        ui.ImageDescriptor? descriptor;
+        ui.Codec? codec;
+        ui.Image? image;
+        try {
+          descriptor = await ui.ImageDescriptor.encoded(buffer);
+          final largest = descriptor.width > descriptor.height
+              ? descriptor.width
+              : descriptor.height;
+          final scale = largest > 512 ? 512 / largest : 1.0;
+          codec = await descriptor.instantiateCodec(
+            targetWidth: (descriptor.width * scale).round().clamp(1, 512),
+            targetHeight: (descriptor.height * scale).round().clamp(1, 512),
           );
-        } else {
-          await PhotoManager.editor.saveImageWithPath(
-            destFile.path,
-            title: fileName,
-            relativePath: _unlockRelativePath,
-          );
+          image = (await codec.getNextFrame()).image;
+          final data = await image.toByteData(format: ui.ImageByteFormat.png);
+          return data?.buffer
+              .asUint8List(data.offsetInBytes, data.lengthInBytes);
+        } finally {
+          image?.dispose();
+          codec?.dispose();
+          descriptor?.dispose();
+          buffer.dispose();
         }
+      }, isNeeded: isNeeded);
 
-        await deleteEncryptedFile(photo['encrypted_path']);
-        await _db.deletePhoto(photo['id']);
-      } catch (e) {
-        debugPrint('Error desbloqueando archivo: $e');
-      }
-    }
-    await PhotoManager.clearFileCache();
-  }
-
-  // ── Miniatura de video ───────────────────────────────────
   Future<Uint8List?> getVideoThumbnail(
-      String encryptedPath, String originalName) async {
-    try {
-      final bytes = await _crypto.decryptFile(encryptedPath);
-      final tempDir = await getTemporaryDirectory();
-      final tempPath = p.join(tempDir.path, 'thumb_$originalName');
-      final tempFile = File(tempPath);
-      await tempFile.writeAsBytes(bytes);
-
-      final thumbnail = await VideoThumbnail.thumbnailData(
-        video: tempFile.path,
-        imageFormat: ImageFormat.JPEG,
-        maxWidth: 300,
-        quality: 75,
-      );
-
-      await tempFile.delete().catchError((_) {});
-      return thumbnail;
-    } catch (e) {
-      debugPrint('Error generando miniatura: $e');
-      return null;
-    }
-  }
+          String encryptedPath, String originalName,
+          {bool Function()? isNeeded}) =>
+      _thumbnails.load('video:$encryptedPath', () async {
+        final bytes = await _crypto.decryptFile(encryptedPath);
+        final tempDir =
+            await (await getTemporaryDirectory()).createTemp('sg_thumb_');
+        try {
+          final tempFile = File(p.join(tempDir.path, p.basename(originalName)));
+          await tempFile.writeAsBytes(bytes);
+          return await VideoThumbnail.thumbnailData(
+            video: tempFile.path,
+            imageFormat: ImageFormat.JPEG,
+            maxWidth: 320,
+            quality: 65,
+          );
+        } finally {
+          await tempDir.delete(recursive: true);
+        }
+      }, isNeeded: isNeeded);
 }

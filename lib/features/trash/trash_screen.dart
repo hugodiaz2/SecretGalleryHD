@@ -461,7 +461,7 @@ class _TrashThumbState extends State<_TrashThumb> {
   void initState() {
     super.initState();
     MediaService.instance
-        .getPhotoBytes(widget.item['encrypted_path'])
+        .getPhotoThumbnail(widget.item['encrypted_path'])
         .then((b) {
       if (mounted) setState(() => _bytes = b);
     });

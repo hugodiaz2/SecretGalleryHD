@@ -1,4 +1,5 @@
 import 'dart:typed_data';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
@@ -31,37 +32,106 @@ class FolderThumbnail extends StatefulWidget {
 class _FolderThumbnailState extends State<FolderThumbnail> {
   Uint8List? _coverBytes;
   bool _loading = true;
+  String? _loadedCoverPath;
+  Timer? _loadTimer;
+  int _requestVersion = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadCover();
+    _scheduleCover();
   }
 
   @override
   void didUpdateWidget(FolderThumbnail old) {
     super.didUpdateWidget(old);
-    if (old.folder['cover_photo_path'] !=
-        widget.folder['cover_photo_path']) {
-      _loadCover();
+    final oldPath = old.folder['cover_photo_path']?.toString();
+    final newPath = widget.folder['cover_photo_path']?.toString();
+    if (oldPath != newPath ||
+        old.folder['id'] != widget.folder['id'] ||
+        old.folder['total_count'] != widget.folder['total_count'] ||
+        old.showPreview != widget.showPreview) {
+      _scheduleCover();
     }
   }
 
-  Future<void> _loadCover() async {
-  setState(() => _loading = true);
-  final path =
-      await DBHelper.instance.getCoverPhoto(widget.folder['id'] as int);
-  if (path != null) {
-    final bytes = MediaService.isVideoPath(path)
-        ? await MediaService.instance.getVideoThumbnail(path, 'cover_thumb.mp4')
-        : await MediaService.instance.getPhotoBytes(path);
-    if (mounted) setState(() => _coverBytes = bytes);
-  } else {
-    // ✅ Limpiar bytes si no hay portada
-    if (mounted) setState(() => _coverBytes = null);
+  void _scheduleCover() {
+    _loadTimer?.cancel();
+    final version = ++_requestVersion;
+    _coverBytes = null;
+    _loadedCoverPath = null;
+    _loading = widget.showPreview;
+    if (!widget.showPreview) return;
+    final path = widget.folder['cover_photo_path']?.toString();
+    if (path != null) {
+      _coverBytes = MediaService.instance
+          .cachedThumbnail(path, video: MediaService.isVideoPath(path));
+      if (_coverBytes != null) {
+        _loadedCoverPath = path;
+        _loading = false;
+        return;
+      }
+    }
+    void start() {
+      if (!mounted || version != _requestVersion) return;
+      if (Scrollable.recommendDeferredLoadingForContext(context)) {
+        _loadTimer = Timer(const Duration(milliseconds: 80), start);
+      } else {
+        _loadCover();
+      }
+    }
+
+    _loadTimer = Timer(Duration.zero, start);
   }
-  if (mounted) setState(() => _loading = false);
-}
+
+  @override
+  void dispose() {
+    _requestVersion++;
+    _loadTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _loadCover() async {
+    final version = _requestVersion;
+    bool needed() =>
+        mounted && version == _requestVersion && widget.showPreview;
+    final path =
+        await DBHelper.instance.getCoverPhoto(widget.folder['id'] as int);
+    if (!needed()) return;
+    if (path == null) {
+      if (!mounted) return;
+      setState(() {
+        _coverBytes = null;
+        _loading = false;
+        _loadedCoverPath = null;
+      });
+      return;
+    }
+
+    if (_loadedCoverPath == path && _coverBytes != null) {
+      if (mounted) setState(() => _loading = false);
+      return;
+    }
+
+    final requestPath = path;
+    final bytes = MediaService.isVideoPath(requestPath)
+        ? await MediaService.instance
+            .getVideoThumbnail(requestPath, 'cover_thumb.mp4', isNeeded: needed)
+        : await MediaService.instance
+            .getPhotoThumbnail(requestPath, isNeeded: needed);
+
+    if (!needed()) {
+      return;
+    }
+
+    if (mounted) {
+      setState(() {
+        _coverBytes = bytes;
+        _loading = false;
+        _loadedCoverPath = requestPath;
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -75,12 +145,8 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
       onLongPress: widget.onLongPress,
       child: Container(
         decoration: BoxDecoration(
-          color: isSelected
-              ? const Color(0xFF1A2A3A)
-              : const Color(0xFF1E1E1E),
-          border: isSelected
-              ? Border.all(color: Colors.blue, width: 2)
-              : null,
+          color: isSelected ? const Color(0xFF1A2A3A) : const Color(0xFF1E1E1E),
+          border: isSelected ? Border.all(color: Colors.blue, width: 2) : null,
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -93,33 +159,55 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
                   // Fondo / miniatura
                   _loading
                       ? Container(color: const Color(0xFF2A2A2A))
-                       : !widget.showPreview // ← si está desactivado
-        ? Container(color: const Color(0xFF2A2A2A))
-                      : _coverBytes != null
-                          ? Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Image.memory(
-                                  _coverBytes!,
-                                  fit: BoxFit.cover,
-                                  errorBuilder: (_, __, ___) => Container(
-                                    color: const Color(0xFF2A2A2A),
-                                  ),
-                                ),
-                                Container(
-                                  color: Colors.black.withOpacity(0.3),
-                                ),
-                              ],
-                            )
-                          : Container(color: const Color(0xFF2A2A2A)),
+                      : !widget.showPreview
+                          ? Container(color: const Color(0xFF2A2A2A))
+                          : _coverBytes != null
+                              ? Stack(
+                                  fit: StackFit.expand,
+                                  children: [
+                                    RepaintBoundary(
+                                      child: LayoutBuilder(
+                                        builder: (context, constraints) {
+                                          final dpr =
+                                              MediaQuery.devicePixelRatioOf(
+                                                  context);
+                                          final widthPx =
+                                              (constraints.maxWidth * dpr)
+                                                  .round()
+                                                  .clamp(96, 512);
+                                          final heightPx =
+                                              (constraints.maxHeight * dpr)
+                                                  .round()
+                                                  .clamp(96, 512);
+
+                                          return Image.memory(
+                                            _coverBytes!,
+                                            fit: BoxFit.cover,
+                                            alignment: Alignment.center,
+                                            cacheWidth: widthPx,
+                                            cacheHeight: heightPx,
+                                            filterQuality: FilterQuality.low,
+                                            isAntiAlias: false,
+                                            errorBuilder: (_, __, ___) =>
+                                                Container(
+                                              color: const Color(0xFF2A2A2A),
+                                            ),
+                                          );
+                                        },
+                                      ),
+                                    ),
+                                    Container(
+                                      color: Colors.black.withOpacity(0.3),
+                                    ),
+                                  ],
+                                )
+                              : Container(color: const Color(0xFF2A2A2A)),
 
                   // Icono candado/carpeta centrado
                   Center(
                     child: Icon(
                       _coverBytes != null
-                          ? (subs > 0
-                              ? Icons.folder_copy
-                              : Icons.folder)
+                          ? (subs > 0 ? Icons.folder_copy : Icons.folder)
                           : Icons.lock_rounded,
                       color: _coverBytes != null
                           ? Colors.white.withOpacity(0.85)
@@ -128,10 +216,7 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
                               : Colors.white54,
                       size: 30,
                       shadows: _coverBytes != null
-                          ? const [
-                              Shadow(
-                                  color: Colors.black54, blurRadius: 8)
-                            ]
+                          ? const [Shadow(color: Colors.black54, blurRadius: 8)]
                           : null,
                     ),
                   ),
@@ -170,8 +255,7 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
             // ── Nombre y menú ──
             Container(
               color: const Color(0xFF0F0F0F),
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
               child: Row(
                 children: [
                   Expanded(
@@ -200,8 +284,7 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
                     ),
                   ),
                   GestureDetector(
-                    onTapDown: (d) =>
-                        widget.onMenuTap(d.globalPosition),
+                    onTapDown: (d) => widget.onMenuTap(d.globalPosition),
                     child: const Padding(
                       padding: EdgeInsets.all(2),
                       child: Icon(

@@ -1,7 +1,8 @@
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import '../services/media_transfer_service.dart';
 
-class DBHelper {
+class DBHelper implements TransferRepository {
   static final DBHelper instance = DBHelper._internal();
   static Database? _db;
   DBHelper._internal();
@@ -16,7 +17,7 @@ class DBHelper {
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), dbFileName);
     return await openDatabase(path,
-        version: 2, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 3, onCreate: _onCreate, onUpgrade: _onUpgrade);
   }
 
   /// Cierra la conexión activa y limpia la instancia en caché. Se usa al
@@ -28,6 +29,14 @@ class DBHelper {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE photos ADD COLUMN source_asset_id TEXT');
+      await db.execute('ALTER TABLE photos ADD COLUMN source_digest TEXT');
+      await db.execute('ALTER TABLE photos ADD COLUMN exported_asset_id TEXT');
+      await db.execute('ALTER TABLE photos ADD COLUMN export_name TEXT');
+      await db.execute(
+          'CREATE INDEX photos_source ON photos(source_asset_id, source_digest)');
+    }
     if (oldVersion < 2) {
       await db.execute('''
         CREATE TABLE IF NOT EXISTS intruders (
@@ -59,9 +68,16 @@ class DBHelper {
         original_name TEXT,
         encrypted_path TEXT NOT NULL,
         original_path TEXT,
+        source_asset_id TEXT,
+        source_digest TEXT,
+        exported_asset_id TEXT,
+        export_name TEXT,
         date_added INTEGER NOT NULL
       )
     ''');
+
+    await db.execute(
+        'CREATE INDEX photos_source ON photos(source_asset_id, source_digest)');
 
     await db.execute('''
   CREATE TABLE trash (
@@ -129,9 +145,7 @@ class DBHelper {
     final db = await database;
     if (search != null && search.isNotEmpty) {
       return await db.query('folders',
-          where: 'name LIKE ?',
-          whereArgs: ['%$search%'],
-          orderBy: 'name ASC');
+          where: 'name LIKE ?', whereArgs: ['%$search%'], orderBy: 'name ASC');
     }
     return await db.query('folders',
         where: 'parent_id IS NULL', orderBy: 'name ASC');
@@ -141,9 +155,7 @@ class DBHelper {
   Future<List<Map<String, dynamic>>> getSubFolders(int parentId) async {
     final db = await database;
     return await db.query('folders',
-        where: 'parent_id = ?',
-        whereArgs: [parentId],
-        orderBy: 'name ASC');
+        where: 'parent_id = ?', whereArgs: [parentId], orderBy: 'name ASC');
   }
 
   /// Toda la jerarquía como árbol plano (para el menú de mover)
@@ -160,8 +172,7 @@ class DBHelper {
 
   Future<int> updateFolder(int id, Map<String, dynamic> data) async {
     final db = await database;
-    return await db.update('folders', data,
-        where: 'id = ?', whereArgs: [id]);
+    return await db.update('folders', data, where: 'id = ?', whereArgs: [id]);
   }
 
   Future<void> deleteFolder(int id) async {
@@ -177,16 +188,15 @@ class DBHelper {
   Future<List<String>> _getAllPhotoPathsInFolder(
       Database db, int folderId) async {
     final paths = <String>[];
-    final photos = await db.query('photos',
-        where: 'folder_id = ?', whereArgs: [folderId]);
+    final photos =
+        await db.query('photos', where: 'folder_id = ?', whereArgs: [folderId]);
     for (final p in photos) {
       paths.add(p['encrypted_path'] as String);
     }
-    final subs = await db.query('folders',
-        where: 'parent_id = ?', whereArgs: [folderId]);
+    final subs = await db
+        .query('folders', where: 'parent_id = ?', whereArgs: [folderId]);
     for (final sub in subs) {
-      final subPaths =
-          await _getAllPhotoPathsInFolder(db, sub['id'] as int);
+      final subPaths = await _getAllPhotoPathsInFolder(db, sub['id'] as int);
       paths.addAll(subPaths);
     }
     return paths;
@@ -231,8 +241,8 @@ class DBHelper {
     }
 
     // Buscar en subcarpetas recursivamente
-    final subs = await db.query('folders',
-        where: 'parent_id = ?', whereArgs: [folderId]);
+    final subs = await db
+        .query('folders', where: 'parent_id = ?', whereArgs: [folderId]);
     for (final sub in subs) {
       final path = await getCoverPhoto(sub['id'] as int);
       if (path != null) return path;
@@ -245,6 +255,60 @@ class DBHelper {
   // PHOTOS
   // ══════════════════════════════════════════
 
+  @override
+  Future<Map<String, dynamic>?> findImported(
+      String assetId, String digest) async {
+    final rows = await (await database).query('photos',
+        where: 'source_asset_id = ? AND source_digest = ?',
+        whereArgs: [assetId, digest],
+        limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  @override
+  Future<Map<String, dynamic>?> photoForTransfer(int id) async {
+    final rows = await (await database)
+        .query('photos', where: 'id = ?', whereArgs: [id], limit: 1);
+    return rows.isEmpty ? null : rows.first;
+  }
+
+  @override
+  Future<String> prepareExport(int id, String proposedName) async {
+    return (await database).transaction((txn) async {
+      final rows =
+          await txn.query('photos', where: 'id = ?', whereArgs: [id], limit: 1);
+      if (rows.isEmpty) throw StateError('El registro privado ya no existe.');
+      final existing = rows.first['export_name'] as String?;
+      if (existing != null) return existing;
+      await txn.update('photos', {'export_name': proposedName},
+          where: 'id = ?', whereArgs: [id]);
+      return proposedName;
+    });
+  }
+
+  @override
+  Future<void> rememberExport(int id, String assetId) async {
+    final count = await (await database).update(
+        'photos', {'exported_asset_id': assetId},
+        where: 'id = ?', whereArgs: [id]);
+    if (count != 1) throw StateError('El registro privado ya no existe.');
+  }
+
+  @override
+  Future<void> finishExport(int id, String encryptedPath) async {
+    await (await database).transaction((txn) async {
+      await txn.update('folders', {'cover_photo_path': null},
+          where: 'cover_photo_path = ?', whereArgs: [encryptedPath]);
+      final count = await txn.delete('photos',
+          where: 'id = ? AND encrypted_path = ?',
+          whereArgs: [id, encryptedPath]);
+      if (count != 1) {
+        throw StateError('El registro privado cambió durante la exportación.');
+      }
+    });
+  }
+
+  @override
   Future<int> insertPhoto(Map<String, dynamic> data) async {
     final db = await database;
     return await db.insert('photos', data);
@@ -260,8 +324,7 @@ class DBHelper {
 
   Future<int> movePhoto(int photoId, int newFolderId) async {
     final db = await database;
-    return await db.update(
-        'photos', {'folder_id': newFolderId},
+    return await db.update('photos', {'folder_id': newFolderId},
         where: 'id = ?', whereArgs: [photoId]);
   }
 
@@ -269,8 +332,7 @@ class DBHelper {
     final db = await database;
     int count = 0;
     for (final id in photoIds) {
-      count += await db.update(
-          'photos', {'folder_id': newFolderId},
+      count += await db.update('photos', {'folder_id': newFolderId},
           where: 'id = ?', whereArgs: [id]);
     }
     return count;
@@ -332,89 +394,88 @@ class DBHelper {
   }
 
   Future<int> moveToTrash(Map<String, dynamic> photo) async {
-  final db = await database;
-  final now = DateTime.now().millisecondsSinceEpoch;
+    final db = await database;
+    final now = DateTime.now().millisecondsSinceEpoch;
 
-  // Limpiar portada si esta foto era portada de alguna carpeta
-  await db.update(
-    'folders',
-    {'cover_photo_path': null},
-    where: 'cover_photo_path = ?',
-    whereArgs: [photo['encrypted_path']],
-  );
+    // Limpiar portada si esta foto era portada de alguna carpeta
+    await db.update(
+      'folders',
+      {'cover_photo_path': null},
+      where: 'cover_photo_path = ?',
+      whereArgs: [photo['encrypted_path']],
+    );
 
-  final id = await db.insert('trash', {
-    'original_id': photo['id'],
-    'folder_id': photo['folder_id'],
-    'original_name': photo['original_name'],
-    'encrypted_path': photo['encrypted_path'],
-    'original_path': photo['original_path'],
-    'deleted_at': now,
-    'type': _getFileType(photo['original_name'] ?? ''),
-  });
-  await db.delete('photos',
-      where: 'id = ?', whereArgs: [photo['id']]);
-  return id;
-}
-
-String _getFileType(String name) {
-  final ext = name.split('.').last.toLowerCase();
-  if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext)) {
-    return 'video';
+    final id = await db.insert('trash', {
+      'original_id': photo['id'],
+      'folder_id': photo['folder_id'],
+      'original_name': photo['original_name'],
+      'encrypted_path': photo['encrypted_path'],
+      'original_path': photo['original_path'],
+      'deleted_at': now,
+      'type': _getFileType(photo['original_name'] ?? ''),
+    });
+    await db.delete('photos', where: 'id = ?', whereArgs: [photo['id']]);
+    return id;
   }
-  return 'photo';
-}
 
-Future<List<Map<String, dynamic>>> getTrashItems() async {
-  final db = await database;
-  return await db.query('trash', orderBy: 'deleted_at DESC');
-}
-
-Future<int> getTrashCount() async {
-  final db = await database;
-  final r = await db.rawQuery('SELECT COUNT(*) as c FROM trash');
-  return (r.first['c'] as int?) ?? 0;
-}
-
-Future<void> restoreFromTrash(Map<String, dynamic> item) async {
-  final db = await database;
-  // Verificar si la carpeta destino aún existe
-  int folderId = item['folder_id'] as int? ?? 0;
-  if (folderId != 0) {
-    final folder = await db.query('folders',
-        where: 'id = ?', whereArgs: [folderId], limit: 1);
-    if (folder.isEmpty) {
-      folderId = 0; // Si la carpeta ya no existe, restaurar a principal
+  String _getFileType(String name) {
+    final ext = name.split('.').last.toLowerCase();
+    if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext)) {
+      return 'video';
     }
+    return 'photo';
   }
 
-  await db.insert('photos', {
-    'folder_id': folderId,
-    'original_name': item['original_name'],
-    'encrypted_path': item['encrypted_path'],
-    'original_path': item['original_path'],
-    'date_added': DateTime.now().millisecondsSinceEpoch,
-  });
-  await db.delete('trash', where: 'id = ?', whereArgs: [item['id']]);
-}
+  Future<List<Map<String, dynamic>>> getTrashItems() async {
+    final db = await database;
+    return await db.query('trash', orderBy: 'deleted_at DESC');
+  }
 
-Future<void> deleteFromTrash(int id) async {
-  final db = await database;
-  await db.delete('trash', where: 'id = ?', whereArgs: [id]);
-}
+  Future<int> getTrashCount() async {
+    final db = await database;
+    final r = await db.rawQuery('SELECT COUNT(*) as c FROM trash');
+    return (r.first['c'] as int?) ?? 0;
+  }
 
-Future<void> emptyTrash() async {
-  final db = await database;
-  await db.delete('trash');
-}
+  Future<void> restoreFromTrash(Map<String, dynamic> item) async {
+    final db = await database;
+    // Verificar si la carpeta destino aún existe
+    int folderId = item['folder_id'] as int? ?? 0;
+    if (folderId != 0) {
+      final folder = await db.query('folders',
+          where: 'id = ?', whereArgs: [folderId], limit: 1);
+      if (folder.isEmpty) {
+        folderId = 0; // Si la carpeta ya no existe, restaurar a principal
+      }
+    }
 
-Future<void> clearCoverIfDeleted(String encryptedPath) async {
-  final db = await database;
-  await db.update(
-    'folders',
-    {'cover_photo_path': null},
-    where: 'cover_photo_path = ?',
-    whereArgs: [encryptedPath],
-  );
-}
+    await db.insert('photos', {
+      'folder_id': folderId,
+      'original_name': item['original_name'],
+      'encrypted_path': item['encrypted_path'],
+      'original_path': item['original_path'],
+      'date_added': DateTime.now().millisecondsSinceEpoch,
+    });
+    await db.delete('trash', where: 'id = ?', whereArgs: [item['id']]);
+  }
+
+  Future<void> deleteFromTrash(int id) async {
+    final db = await database;
+    await db.delete('trash', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> emptyTrash() async {
+    final db = await database;
+    await db.delete('trash');
+  }
+
+  Future<void> clearCoverIfDeleted(String encryptedPath) async {
+    final db = await database;
+    await db.update(
+      'folders',
+      {'cover_photo_path': null},
+      where: 'cover_photo_path = ?',
+      whereArgs: [encryptedPath],
+    );
+  }
 }
