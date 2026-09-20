@@ -33,6 +33,15 @@ class SecretGalleryApp extends StatelessWidget {
         title: 'Secret Gallery HD',
         debugShowCheckedModeBanner: false,
         theme: ThemeService.instance.themeData,
+        // Keep every route and modal above the system navigation area.
+        // SafeArea consumes these insets so nested SafeAreas do not double them.
+        builder: (context, child) => ColoredBox(
+          color: Theme.of(context).scaffoldBackgroundColor,
+          child: SafeArea(
+            top: false, // AppBars and screen-level SafeAreas handle the status bar.
+            child: child ?? const SizedBox.shrink(),
+          ),
+        ),
         home: const AppEntry(),
       ),
     );

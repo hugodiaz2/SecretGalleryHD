@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
+import '../../core/theme/app_colors.dart';
 
 class FolderTreeSheet extends StatefulWidget {
-  final List<int> excludeFolderIds; // carpetas que NO pueden ser destino
-  final int? currentFolderId; // carpeta donde estás ahora (se muestra pero no seleccionable)
+  // Selected folders cannot be moved into themselves or their descendants.
+  final List<int> excludeFolderIds;
+  final int? currentFolderId;
 
   const FolderTreeSheet({
     super.key,
@@ -17,11 +19,15 @@ class FolderTreeSheet extends StatefulWidget {
 }
 
 class _FolderTreeSheetState extends State<FolderTreeSheet> {
-  final _db = DBHelper.instance;
-  List<Map<String, dynamic>> _allFolders = [];
-  final Set<int> _expanded = {};
-  String _search = '';
   final _searchCtrl = TextEditingController();
+  final Map<int, Map<String, dynamic>> _byId = {};
+  final Map<int?, List<Map<String, dynamic>>> _children = {};
+  final Set<int> _blocked = {};
+  int? _parentId;
+  bool _loading = true;
+  bool _failed = false;
+  bool _searching = false;
+  String _query = '';
 
   @override
   void initState() {
@@ -36,251 +42,320 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
   }
 
   Future<void> _load() async {
-    final folders = await _db.getAllFoldersFlat();
-
-    // Auto-expandir la carpeta actual para que se vea en el árbol
-    if (widget.currentFolderId != null) {
-      _expanded.add(widget.currentFolderId!);
-      // También expandir su padre si tiene
-      final current = folders.firstWhere(
-        (f) => f['id'] == widget.currentFolderId,
-        orElse: () => <String, dynamic>{},
-      );
-      if (current.isNotEmpty && current['parent_id'] != null) {
-        _expanded.add(current['parent_id'] as int);
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final folders = await DBHelper.instance.getAllFoldersFlat();
+      if (!mounted) return;
+      _byId.clear();
+      _children.clear();
+      _blocked.clear();
+      for (final folder in folders) {
+        _byId[folder['id'] as int] = folder;
+        (_children[folder['parent_id'] as int?] ??= []).add(folder);
       }
+      // Older callers include the current parent in exclusions. It remains
+      // browsable so its other children are still valid destinations.
+      final pending = widget.excludeFolderIds
+          .where((id) => id != widget.currentFolderId)
+          .toList();
+      while (pending.isNotEmpty) {
+        final id = pending.removeLast();
+        if (!_blocked.add(id)) continue;
+        pending.addAll((_children[id] ?? []).map((f) => f['id'] as int));
+      }
+      setState(() => _loading = false);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _failed = true;
+      });
     }
-
-    setState(() => _allFolders = folders);
   }
 
-  // Solo excluir carpetas seleccionadas para mover, NO la carpeta actual
-  bool _isBlockedDestination(int id) {
-    // Si es la carpeta actual, se muestra pero no se selecciona
-    if (id == widget.currentFolderId) return true;
-    // Las carpetas seleccionadas para mover no pueden ser destino
-    return widget.excludeFolderIds
-        .where((e) => e != widget.currentFolderId)
-        .contains(id);
+  List<Map<String, dynamic>> get _visibleFolders {
+    final query = _query.trim().toLowerCase();
+    final source = query.isEmpty
+        ? (_children[_parentId] ?? <Map<String, dynamic>>[])
+        : _byId.values;
+    return source.where((folder) {
+      return !_blocked.contains(folder['id']) &&
+          (query.isEmpty ||
+              (folder['name'] as String).toLowerCase().contains(query));
+    }).toList()
+      ..sort((a, b) => (a['name'] as String)
+          .toLowerCase()
+          .compareTo((b['name'] as String).toLowerCase()));
   }
 
-  List<Map<String, dynamic>> get _roots => _allFolders
-      .where((f) =>
-          f['parent_id'] == null &&
-          (_search.isEmpty ||
-              (f['name'] as String)
-                  .toLowerCase()
-                  .contains(_search.toLowerCase())))
-      .toList()
-    ..sort((a, b) =>
-        (a['name'] as String).compareTo(b['name'] as String));
+  String _path(int? id) {
+    final names = <String>[];
+    final visited = <int>{};
+    while (id != null && visited.add(id)) {
+      final folder = _byId[id];
+      if (folder == null) break;
+      names.add(folder['name'] as String);
+      id = folder['parent_id'] as int?;
+    }
+    return ['Carpetas', ...names.reversed].join(' / ');
+  }
 
-  List<Map<String, dynamic>> _childrenOf(int parentId) => _allFolders
-      .where((f) =>
-          f['parent_id'] == parentId &&
-          (_search.isEmpty ||
-              (f['name'] as String)
-                  .toLowerCase()
-                  .contains(_search.toLowerCase())))
-      .toList()
-    ..sort((a, b) =>
-        (a['name'] as String).compareTo(b['name'] as String));
+  void _clearSearch() {
+    _searchCtrl.clear();
+    _query = '';
+    _searching = false;
+    FocusScope.of(context).unfocus();
+  }
 
-  Widget _buildNode(Map<String, dynamic> folder, int depth) {
-    final id = folder['id'] as int;
-    final name = folder['name'] as String;
-    final children = _childrenOf(id);
-    final hasChildren = children.isNotEmpty;
-    final isExpanded = _expanded.contains(id);
-    final isCurrent = id == widget.currentFolderId;
-    final isBlocked = _isBlockedDestination(id);
+  void _open(Map<String, dynamic> folder) {
+    setState(() {
+      _clearSearch();
+      _parentId = folder['id'] as int;
+    });
+  }
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        InkWell(
-          onTap: isBlocked
-              ? null
-              : () => Navigator.pop(context, folder),
-          child: Container(
-            color: isCurrent
-                ? const Color(0xFF1565C0).withOpacity(0.12)
-                : Colors.transparent,
-            padding: EdgeInsets.only(
-              left: 16.0 + depth * 20,
-              right: 16,
-              top: 10,
-              bottom: 10,
-            ),
-            child: Row(
-              children: [
-                // Flecha expandir/colapsar
-                GestureDetector(
-                  onTap: hasChildren
-                      ? () => setState(() {
-                            isExpanded
-                                ? _expanded.remove(id)
-                                : _expanded.add(id);
-                          })
-                      : null,
-                  child: SizedBox(
-                    width: 20,
-                    child: hasChildren
-                        ? Icon(
-                            isExpanded
-                                ? Icons.keyboard_arrow_down
-                                : Icons.keyboard_arrow_right,
-                            color: Colors.white54,
-                            size: 20,
-                          )
-                        : null,
-                  ),
-                ),
-                const SizedBox(width: 6),
-
-                // Ícono carpeta
-                Icon(
-                  isCurrent
-                      ? Icons.folder_open
-                      : depth == 0
-                          ? Icons.folder
-                          : Icons.folder_open,
-                  color: isCurrent
-                      ? const Color(0xFF1565C0)
-                      : isBlocked
-                          ? Colors.white24
-                          : const Color(0xFF1565C0),
-                  size: 20,
-                ),
-                const SizedBox(width: 10),
-
-                // Nombre
-                Expanded(
-                  child: Text(
-                    name,
-                    style: GoogleFonts.poppins(
-                      color: isCurrent
-                          ? const Color(0xFF1565C0)
-                          : isBlocked
-                              ? Colors.white38
-                              : Colors.white,
-                      fontSize: 14,
-                      fontWeight: isCurrent || depth == 0
-                          ? FontWeight.w600
-                          : FontWeight.normal,
-                    ),
-                  ),
-                ),
-
-                // Badge "Aquí"
-                if (isCurrent)
-                  Container(
-                    margin: const EdgeInsets.only(right: 8),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: const Color(0xFF1565C0).withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(4),
-                      border: Border.all(
-                          color: const Color(0xFF1565C0), width: 1),
-                    ),
-                    child: Text(
-                      'Aquí',
-                      style: GoogleFonts.poppins(
-                        color: const Color(0xFF1565C0),
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-
-                // Conteo de fotos
-                FutureBuilder<int>(
-                  future: _db.getTotalPhotoCount(id),
-                  builder: (_, snap) => Text(
-                    '${snap.data ?? 0}',
-                    style: GoogleFonts.poppins(
-                        color: Colors.white38, fontSize: 11),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-
-        // Hijos
-        if (hasChildren && isExpanded)
-          ...children.map((c) => _buildNode(c, depth + 1)),
-      ],
-    );
+  void _back() {
+    if (_searching) {
+      setState(_clearSearch);
+    } else if (_parentId != null) {
+      setState(() => _parentId = _byId[_parentId]?['parent_id'] as int?);
+    } else {
+      Navigator.pop(context);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      decoration: const BoxDecoration(
-        color: Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 40,
-            height: 4,
-            margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2)),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Text(
-              'Mover a carpeta',
-              style: GoogleFonts.poppins(
-                color: Colors.white,
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: TextField(
-              controller: _searchCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                hintText: 'Buscar carpeta...',
-                hintStyle: const TextStyle(color: Colors.white38),
-                prefixIcon:
-                    const Icon(Icons.search, color: Colors.white38),
-                filled: true,
-                fillColor: const Color(0xFF2A2A2A),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: BorderSide.none,
-                ),
-              ),
-              onChanged: (v) => setState(() => _search = v),
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Divider(color: Colors.white12),
-          Expanded(
-            child: _allFolders.isEmpty
-                ? Center(
-                    child: Text('Sin carpetas',
-                        style: GoogleFonts.poppins(
-                            color: Colors.white38)))
-                : ListView(
-                    children: _roots
-                        .map((f) => _buildNode(f, 0))
-                        .toList(),
+    final colors = context.colors;
+    final accent = Theme.of(context).colorScheme.primary;
+    final destination = _byId[_parentId];
+    final canMove = !_searching &&
+        !_loading &&
+        !_failed &&
+        destination != null &&
+        _parentId != widget.currentFolderId &&
+        !_blocked.contains(_parentId);
+    final folders = _visibleFolders;
+    return PopScope(
+      canPop: _parentId == null && !_searching,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _back();
+      },
+      child: LayoutBuilder(builder: (context, constraints) {
+        final keyboard = MediaQuery.viewInsetsOf(context).bottom;
+        final available = (constraints.maxHeight - keyboard)
+            .clamp(0.0, constraints.maxHeight)
+            .toDouble();
+        final height = (MediaQuery.sizeOf(context).height * 0.82)
+            .clamp(0.0, available)
+            .toDouble();
+        return Padding(
+          padding: EdgeInsets.only(bottom: keyboard),
+          child: SizedBox(
+            height: height,
+            child: Material(
+              color: colors.surface,
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(24)),
+              clipBehavior: Clip.antiAlias,
+              child: SafeArea(
+                top: false,
+                child: Column(children: [
+                  const SizedBox(height: 8),
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                        color: colors.border,
+                        borderRadius: BorderRadius.circular(4)),
                   ),
+                  Row(children: [
+                    IconButton(
+                        onPressed: _back,
+                        tooltip: _parentId == null && !_searching
+                            ? 'Cerrar'
+                            : 'Regresar',
+                        icon: const Icon(Icons.arrow_back)),
+                    Expanded(
+                        child: Text('Mover a carpeta',
+                            style: GoogleFonts.poppins(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w600,
+                                color: colors.textPrimary))),
+                    IconButton(
+                      tooltip:
+                          _searching ? 'Cerrar búsqueda' : 'Buscar carpeta',
+                      onPressed: () => setState(() {
+                        if (_searching) {
+                          _clearSearch();
+                        } else {
+                          _searching = true;
+                        }
+                      }),
+                      icon: Icon(_searching ? Icons.search_off : Icons.search),
+                    ),
+                    IconButton(
+                        tooltip: 'Cancelar',
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close)),
+                  ]),
+                  if (_searching)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+                      child: TextField(
+                        controller: _searchCtrl,
+                        autofocus: true,
+                        onChanged: (value) => setState(() => _query = value),
+                        decoration: InputDecoration(
+                          hintText: 'Buscar en todas las carpetas',
+                          prefixIcon: const Icon(Icons.search),
+                          isDense: true,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12)),
+                        ),
+                      ),
+                    ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 10),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                          _query.trim().isNotEmpty
+                              ? 'Resultados de búsqueda'
+                              : _path(_parentId),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                              color: colors.textSecondary, fontSize: 12)),
+                    ),
+                  ),
+                  Expanded(
+                      child: _loading
+                          ? const Center(child: CircularProgressIndicator())
+                          : _failed
+                              ? Center(
+                                  child: TextButton.icon(
+                                      onPressed: _load,
+                                      icon: const Icon(Icons.refresh),
+                                      label: const Text('Reintentar carga')))
+                              : folders.isEmpty
+                                  ? Center(
+                                      child: Padding(
+                                      padding: const EdgeInsets.all(16),
+                                      child: Text(
+                                          _query.trim().isNotEmpty
+                                              ? 'No se encontraron carpetas'
+                                              : _parentId == null
+                                                  ? 'No hay carpetas disponibles'
+                                                  : 'Esta carpeta no tiene subcarpetas.',
+                                          textAlign: TextAlign.center,
+                                          style: TextStyle(
+                                              color: colors.textMuted)),
+                                    ))
+                                  : LayoutBuilder(
+                                      builder: (context, gridConstraints) {
+                                      final columns =
+                                          ((gridConstraints.maxWidth - 24) / 64)
+                                              .floor()
+                                              .clamp(2, 6);
+                                      final width = (gridConstraints.maxWidth -
+                                              24 -
+                                              (columns - 1) * 8) /
+                                          columns;
+                                      return GridView.builder(
+                                        key: ValueKey('$_parentId:$_query'),
+                                        padding: const EdgeInsets.fromLTRB(
+                                            12, 2, 12, 12),
+                                        gridDelegate:
+                                            SliverGridDelegateWithFixedCrossAxisCount(
+                                          crossAxisCount: columns,
+                                          crossAxisSpacing: 8,
+                                          mainAxisSpacing: 8,
+                                          mainAxisExtent: width +
+                                              MediaQuery.textScalerOf(context)
+                                                  .scale(34),
+                                        ),
+                                        itemCount: folders.length,
+                                        itemBuilder: (context, index) {
+                                          final folder = folders[index];
+                                          final id = folder['id'] as int;
+                                          final isCurrent =
+                                              id == widget.currentFolderId;
+                                          final hasChildren =
+                                              (_children[id] ?? []).isNotEmpty;
+                                          return Tooltip(
+                                            message: _path(id),
+                                            child: InkWell(
+                                              borderRadius:
+                                                  BorderRadius.circular(10),
+                                              onTap: () => _open(folder),
+                                              child: Column(children: [
+                                                AspectRatio(
+                                                  aspectRatio: 1,
+                                                  child: Container(
+                                                    decoration: BoxDecoration(
+                                                      color: colors.surfaceHigh,
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              10),
+                                                      border: Border.all(
+                                                          color: isCurrent
+                                                              ? accent
+                                                              : colors.border),
+                                                    ),
+                                                    child: Icon(
+                                                        hasChildren
+                                                            ? Icons
+                                                                .folder_copy_outlined
+                                                            : Icons
+                                                                .folder_outlined,
+                                                        size: 32,
+                                                        color: accent),
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 4),
+                                                Text(folder['name'] as String,
+                                                    maxLines: 2,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                    textAlign: TextAlign.center,
+                                                    style: TextStyle(
+                                                        color:
+                                                            colors.textPrimary,
+                                                        fontSize: 10)),
+                                              ]),
+                                            ),
+                                          );
+                                        },
+                                      );
+                                    })),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        onPressed: canMove
+                            ? () => Navigator.pop(context, destination)
+                            : null,
+                        icon: const Icon(Icons.drive_file_move_outline),
+                        label: Text(_parentId == widget.currentFolderId &&
+                                _parentId != null
+                            ? 'Esta es la carpeta actual'
+                            : _parentId == null
+                                ? 'Abre una carpeta de destino'
+                                : 'Mover aquí'),
+                      ),
+                    ),
+                  ),
+                ]),
+              ),
+            ),
           ),
-        ],
-      ),
+        );
+      }),
     );
   }
 }

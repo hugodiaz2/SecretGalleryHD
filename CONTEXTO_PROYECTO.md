@@ -1,6 +1,6 @@
 # Secret Gallery HD — Contexto y control del proyecto
 
-Última actualización: 2026-09-18.
+Última actualización: 2026-09-20.
 Estado: aplicación existente en desarrollo; revisión técnica inicial realizada.
 Destinatarios: desarrolladores, responsables del proyecto y asistentes como Codex o Claude.
 
@@ -347,3 +347,75 @@ SG-001 tiene corrección implementada y prueba de concurrencia aprobada. SG-009 
 - Se mantienen publicación única, recuperación de reintentos, comprobación del contenido público antes de retirar el registro privado y limpieza de temporales. No se añadieron mensajes de éxito.
 - El doble de pruebas existente se adaptó a la nueva API; no se ejecutó una batería larga ni se recompiló el APK. Mejora de tiempo pendiente de medir en teléfono.
 - Archivos: crypto_service.dart, media_transfer_service.dart, device_gallery.dart, test/media_service_test.dart y esta guía.
+## 18. ACT-006 — Motor Android para transferencias más rápidas (2026-09-20)
+
+- Motivo: las optimizaciones previas reducían bloqueos de interfaz, pero AES y SHA-256 seguían ejecutándose en Dart y generando buffers completos por archivo.
+- Android ahora usa VaultCrypto (Java/JCA) a través de VaultCryptoPlugin, con dos trabajadores fuera del hilo principal. Cifrado, descifrado de exportación y SHA-256 leen bloques de 128 KiB; no cargan fotos o videos completos en el puente Flutter.
+- Se conserva el formato existente: IV de 16 bytes seguido de AES-SIC/CTR con relleno PKCS7, clave de 256 bits. No cambia la clave, no se recifran ni migran los archivos existentes y no se introduce un nuevo formato. Esta optimización no añade autenticación criptográfica; SG-007 continúa pendiente.
+- La verificación al ocultar descifra y calcula SHA-256 en el motor nativo, sin devolver el contenido completo a Dart. El borrado público sigue requiriendo que la copia privada haya sido verificada y registrada. El desbloqueo también conserva la verificación pública antes de retirar la privada.
+- La escritura privada usa flush + fsync. Los destinos existentes no se sobrescriben; los archivos parciales nuevos se eliminan si la operación falla. El puente solo permite destinos dentro del almacenamiento de la aplicación.
+- Otras plataformas y las previsualizaciones conservan los workers Dart existentes. Los permisos se siguen gestionando con photo_manager. No se cambiaron los mensajes de la interfaz.
+
+### Comprobación puntual realizada
+
+- Nueve vectores sintéticos generados por la librería Dart instalada: tamaños 1, 15, 16, 17, 31, 131071, 131072, 131073 y 1048576 bytes; IV elegido para comprobar el acarreo del contador.
+- El motor Java genera exactamente los mismos bytes cifrados que Dart y descifra correctamente los archivos producidos por Dart. Se verificaron también SHA-256, modo solo verificación, rechazo de sobrescritura, truncamiento, padding inválido y limpieza de salida parcial.
+- El encoder Dart existente no admite entrada vacía; no se considera una fotografía válida y no forma parte de los vectores de compatibilidad.
+- Comprobación ejecutada con el JDK local; no equivale a un benchmark ni a una validación funcional en un teléfono Android.
+- Análisis Dart de los servicios modificados: sin errores; observaciones de estilo pendientes.
+
+### Archivos y reproducción
+
+- `android/app/src/main/kotlin/com/example/secret_gallery/VaultCrypto.java`: motor por bloques, sin dependencia de APIs Android para permitir comprobación JVM.
+- `android/app/src/main/kotlin/com/example/secret_gallery/VaultCryptoPlugin.kt`: puente Android y ejecución en segundo plano.
+- `MainActivity.kt`: registro del plugin.
+- `lib/core/security/crypto_service.dart`: selección del motor nativo Android y respaldo Dart para otras plataformas.
+- `lib/core/services/media_transfer_service.dart`: verificación privada mediante digest, sin transportar todo el archivo a Dart.
+- `tool/crypto_compatibility.dart` y `android/app/src/test/java/com/example/secret_gallery/VaultCryptoCompatibilityCheck.java`: comprobación reproducible con archivos de prueba.
+
+```sh
+dart run tool/crypto_compatibility.dart build/crypto_compatibility
+javac -encoding UTF-8 -d build/crypto_compatibility/classes android/app/src/main/kotlin/com/example/secret_gallery/VaultCrypto.java android/app/src/test/java/com/example/secret_gallery/VaultCryptoCompatibilityCheck.java
+java -cp build/crypto_compatibility/classes com.example.secret_gallery.VaultCryptoCompatibilityCheck build/crypto_compatibility
+```
+
+Para medir la rapidez real, usar una compilación release y el mismo lote de fotografías en el mismo teléfono. Registrar cantidad, tamaño total y duración de ocultar/desbloquear; no comparar una ejecución debug con aplicaciones release. Las esperas del permiso de borrado del sistema se registran aparte. No se promete un factor de aceleración sin esa medición.
+
+El nuevo canal Android requiere reconstruir e instalar la aplicación; hot reload por sí solo no lo activa. No desinstalar ni borrar datos de la bóveda para actualizar.
+
+### Resultado de compilación ACT-006
+
+- 2026-09-20: "flutter build apk --release --no-pub" completado correctamente, incluyendo compilación del motor Java, plugin Kotlin y empaquetado release.
+- Artefacto: build/app/outputs/flutter-apk/app-release.apk (57.9 MB reportados por Flutter).
+- No se instaló ni publicó automáticamente. Pendiente medición de tiempos en el teléfono del usuario.
+
+## 19. ACT-007 — Respetar la barra de navegación del teléfono (2026-09-20)
+
+- Se añadió SafeArea en el builder de MaterialApp, por encima del Navigator: protege pantallas y paneles modales (incluida la paleta de colores) frente a la barra inferior y las intrusiones laterales del sistema.
+- El espacio se obtiene dinámicamente de MediaQuery; no se fija una altura según marca o modelo. Los SafeArea internos no duplican el margen consumido. El borde superior sigue a cargo de AppBar y de los SafeArea de cada pantalla.
+- El fondo del área reservada usa el tema actual. Se conserva el tratamiento normal del teclado y los márgenes se actualizan al cambiar la visibilidad de las barras del sistema.
+- Archivo: lib/main.dart. No cambia cifrado, importación ni desbloqueo. Pendiente comprobación visual en el teléfono con navegación por botones y por gestos; no se generó otro APK para este ajuste.
+## 20. ACT-008 — Selector de álbumes compacto (2026-09-20)
+
+- El selector de importación muestra tres columnas en lugar de dos, con proporción 0.90, separación de 6 y margen exterior de 10 píxeles lógicos, siguiendo la referencia visual del usuario.
+- Pestañas FOTOS/VIDEOS de 44 píxeles lógicos, solo texto. Tarjetas con esquinas de 4, etiquetas y conteos más pequeños y menos relleno para mostrar más álbumes a la vez.
+- Archivo: lib/features/import/gallery_picker_screen.dart. Conserva conteos, selección de álbumes, cuadrícula interna de fotos y videos y transferencias. Mantiene el SafeArea global de ACT-007.
+- Revisión del diff; pendiente comprobación visual en dispositivo. No se compiló un APK para este ajuste de presentación.
+## 21. ACT-009 — Lectura nativa para acelerar miniaturas (2026-09-20)
+
+- CryptoService.decryptFile usa ahora decryptBytes del motor Java/JCA en Android. Antes, las miniaturas todavía descifraban originales con AES en un worker Dart. Otras plataformas conservan compute.
+- El nuevo método reutiliza la comprobación PKCS7 de PlainSink y devuelve bytes en memoria, sin crear nuevos temporales descifrados. Sirve también a los consumidores existentes de decryptFile (visor y entrada para miniaturas de video); la publicación y el borrado no cambian.
+- Las miniaturas de fotos pasan de 512 a 384 píxeles máximos por lado. Se conserva la resolución del original en el visor. Las celdas ajustan también su tamaño de decodificación a 384.
+- Tras desplazamiento rápido, la comprobación de reanudación pasa de 80 a 32 ms. La caché sigue acotada a 24 MiB/180 entradas y la cola mantiene dos trabajos simultáneos para limitar presión de memoria. No se promete un multiplicador de velocidad sin medición en teléfono.
+- La lectura de previsualización requiere el original comprimido completo en memoria; el procesamiento por bloques de las transferencias se conserva. No se crea caché persistente de fotos sin cifrar.
+- Verificación JVM: nueve vectores Dart/Java con igualdad de bytes de la nueva lectura, límites de bloque y rechazo de padding inválido, correctos. Pendiente medir tiempos de carga y fluidez en Android.
+- Requiere reconstruir e instalar con flutter run --release; hot reload no registra el método nativo nuevo. No se generó un APK para esta modificación.
+## 22. ACT-010 — Menú para mover con cuadrícula y navegación (2026-09-20)
+
+- FolderTreeSheet sustituye el árbol de filas por tarjetas compactas de carpetas, con columnas adaptadas al ancho (hasta seis; cinco en teléfonos de ancho suficiente).
+- Se abre en la raíz. Tocar una tarjeta entra en esa carpeta y muestra sus hijos directos. El encabezado muestra la ruta, Regresar sube un nivel, Buscar permite encontrar carpetas de cualquier profundidad y Cancelar cierra el panel. El botón del sistema también retrocede dentro del selector.
+- Mover aquí devuelve la carpeta abierta al llamador existente; entrar en una carpeta no ejecuta el movimiento. La carpeta actual se puede explorar, pero no confirmar como destino. Durante la búsqueda se debe abrir un resultado antes de confirmar.
+- Las carpetas seleccionadas para mover y todos sus descendientes quedan excluidos, evitando ciclos. Se conserva la compatibilidad con llamadores que incluyen la carpeta actual entre las exclusiones.
+- Se carga la jerarquía una vez y se indexa en memoria; se eliminaron las consultas de conteo por tarjeta. Incluye carga, error con reintento, estados vacíos, ajuste al teclado y colores del tema.
+- El selector compartido actualiza los flujos de mover fotos, videos y carpetas. No cambia las operaciones de cifrado ni transferencia.
+- Análisis Dart del archivo sin incidencias. Pendiente comprobación visual en dispositivo; no se generó otro APK.

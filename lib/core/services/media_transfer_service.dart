@@ -1,7 +1,6 @@
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
-import 'package:flutter/foundation.dart' show compute;
 import 'package:path/path.dart' as p;
 import 'package:photo_manager/photo_manager.dart';
 import 'package:pointycastle/digests/sha256.dart';
@@ -127,11 +126,8 @@ class MediaTransferService {
   static String _hex(Uint8List bytes) =>
       bytes.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 
-  static Future<String> digestFile(File file) =>
-      compute(_digestFileOnWorker, file.path);
+  static Future<String> digestFile(File file) => CryptoService.hashFile(file);
 
-  static Future<String> _digestBytesAsync(Uint8List bytes) =>
-      compute(digestBytes, bytes);
   Future<TransferResult> importAssets({
     required List<AssetEntity> assets,
     required int folderId,
@@ -161,17 +157,17 @@ class MediaTransferService {
             final existing = await repository.findImported(asset.id, digest);
             if (existing != null) {
               // A cancelled public deletion can be retried without a second copy.
-              final bytes = await crypto
-                  .decryptFile(existing['encrypted_path'] as String);
-              if (await _digestBytesAsync(bytes) != digest) {
+              final privateDigest = await crypto
+                  .prepareExportFile(existing['encrypted_path'] as String);
+              if (privateDigest != digest) {
                 throw StateError(
                     'La copia privada existente no pasó la verificación.');
               }
             } else {
               final name = p.basename(asset.title ?? source.path);
               newPath = await crypto.encryptAndSave(source, name);
-              final restored = await crypto.decryptFile(newPath);
-              if (await _digestBytesAsync(restored) != digest) {
+              final privateDigest = await crypto.prepareExportFile(newPath);
+              if (privateDigest != digest) {
                 throw StateError(
                     'La copia privada no coincide con el original.');
               }
@@ -328,22 +324,4 @@ class MediaTransferService {
         });
         return result;
       });
-}
-
-String _digestFileOnWorker(String path) {
-  final digest = SHA256Digest();
-  final input = File(path).openSync();
-  final buffer = Uint8List(128 * 1024);
-  try {
-    var count = input.readIntoSync(buffer);
-    while (count > 0) {
-      digest.update(buffer, 0, count);
-      count = input.readIntoSync(buffer);
-    }
-  } finally {
-    input.closeSync();
-  }
-  final output = Uint8List(digest.digestSize);
-  digest.doFinal(output, 0);
-  return output.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 }

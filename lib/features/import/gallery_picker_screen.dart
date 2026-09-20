@@ -324,11 +324,11 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                       fontWeight: FontWeight.w600, fontSize: 13),
                   tabs: const [
                     Tab(
-                      icon: Icon(Icons.photo_outlined, size: 18),
+                      height: 44,
                       text: 'FOTOS',
                     ),
                     Tab(
-                      icon: Icon(Icons.videocam_outlined, size: 18),
+                      height: 44,
                       text: 'VIDEOS',
                     ),
                   ],
@@ -371,12 +371,12 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
     }
 
     return GridView.builder(
-      padding: const EdgeInsets.all(8),
+      padding: const EdgeInsets.all(10),
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        mainAxisSpacing: 8,
-        crossAxisSpacing: 8,
-        childAspectRatio: 0.85,
+        crossAxisCount: 3,
+        mainAxisSpacing: 6,
+        crossAxisSpacing: 6,
+        childAspectRatio: 0.90,
       ),
       itemCount: _albums.length,
       itemBuilder: (_, i) {
@@ -384,7 +384,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
         return GestureDetector(
           onTap: () => _openAlbum(album),
           child: ClipRRect(
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(4),
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -403,7 +403,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                   left: 0,
                   right: 0,
                   child: Container(
-                    padding: const EdgeInsets.fromLTRB(10, 24, 10, 10),
+                    padding: const EdgeInsets.fromLTRB(5, 16, 5, 5),
                     decoration: const BoxDecoration(
                       gradient: LinearGradient(
                         begin: Alignment.bottomCenter,
@@ -423,7 +423,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                               style: GoogleFonts.poppins(
                                 color: Colors.white,
                                 fontWeight: FontWeight.w600,
-                                fontSize: 13,
+                                fontSize: 11,
                               ),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
@@ -431,7 +431,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
                             Text(
                               '$count ${_activeTab == 0 ? 'foto${count == 1 ? '' : 's'}' : 'video${count == 1 ? '' : 's'}'}',
                               style: GoogleFonts.poppins(
-                                  color: Colors.white60, fontSize: 11),
+                                  color: Colors.white60, fontSize: 9),
                             ),
                           ],
                         );

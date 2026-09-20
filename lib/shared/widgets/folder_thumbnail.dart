@@ -75,7 +75,7 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
     void start() {
       if (!mounted || version != _requestVersion) return;
       if (Scrollable.recommendDeferredLoadingForContext(context)) {
-        _loadTimer = Timer(const Duration(milliseconds: 80), start);
+        _loadTimer = Timer(const Duration(milliseconds: 32), start);
       } else {
         _loadCover();
       }
@@ -174,11 +174,11 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
                                           final widthPx =
                                               (constraints.maxWidth * dpr)
                                                   .round()
-                                                  .clamp(96, 512);
+                                                  .clamp(96, 384);
                                           final heightPx =
                                               (constraints.maxHeight * dpr)
                                                   .round()
-                                                  .clamp(96, 512);
+                                                  .clamp(96, 384);
 
                                           return Image.memory(
                                             _coverBytes!,

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart' show compute;
 import 'package:encrypt/encrypt.dart';
 import 'package:pointycastle/digests/sha256.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 class CryptoService {
   static const _keyName = 'sg_aes_key';
+  static const _native = MethodChannel('secret_gallery/crypto');
   final _storage = const FlutterSecureStorage(
     aOptions: AndroidOptions(resetOnError: true),
   );
@@ -46,6 +48,18 @@ class CryptoService {
     final dir = await _getSecureDir();
     final fileName =
         '${DateTime.now().microsecondsSinceEpoch}_${iv.base16}_${p.basename(originalName)}.enc';
+    if (Platform.isAndroid) {
+      final destination = p.join(dir.path, fileName);
+      final saved = await _native.invokeMethod<String>('encryptFile', {
+        'source': sourceFile.path,
+        'destination': destination,
+        'key': key.bytes,
+        'iv': iv.bytes,
+      });
+      if (saved == null)
+        throw StateError('No se pudo guardar el archivo privado.');
+      return saved;
+    }
     return compute(_encryptOnWorker, (
       source: sourceFile.path,
       destination: p.join(dir.path, fileName),
@@ -56,6 +70,16 @@ class CryptoService {
 
   Future<Uint8List> decryptFile(String encryptedPath) async {
     final key = await _getKey();
+    if (Platform.isAndroid) {
+      final bytes = await _native.invokeMethod<Uint8List>('decryptBytes', {
+        'source': encryptedPath,
+        'key': key.bytes,
+      });
+      if (bytes == null) {
+        throw StateError('No se pudo leer el archivo privado.');
+      }
+      return bytes;
+    }
     return compute(_decryptOnWorker, (path: encryptedPath, key: key.bytes));
   }
 
@@ -64,8 +88,28 @@ class CryptoService {
   Future<String> prepareExportFile(String encryptedPath,
       {String? destinationPath}) async {
     final key = await _getKey();
+    if (Platform.isAndroid) {
+      final digest = await _native.invokeMethod<String>('prepareExport', {
+        'source': encryptedPath,
+        'destination': destinationPath,
+        'key': key.bytes,
+      });
+      if (digest == null)
+        throw StateError('No se pudo verificar el archivo privado.');
+      return digest;
+    }
     return compute(_prepareExportOnWorker,
         (path: encryptedPath, destination: destinationPath, key: key.bytes));
+  }
+
+  static Future<String> hashFile(File file) async {
+    if (Platform.isAndroid) {
+      final digest =
+          await _native.invokeMethod<String>('hashFile', {'source': file.path});
+      if (digest == null) throw StateError('No se pudo verificar el archivo.');
+      return digest;
+    }
+    return compute(_hashFileOnWorker, file.path);
   }
 
   Future<Directory> _getSecureDir() async {
@@ -142,4 +186,22 @@ String _prepareExportOnWorker(
     File(job.destination!).writeAsBytesSync(bytes, flush: true);
   }
   return digest;
+}
+
+String _hashFileOnWorker(String path) {
+  final digest = SHA256Digest();
+  final input = File(path).openSync();
+  final buffer = Uint8List(128 * 1024);
+  try {
+    var count = input.readIntoSync(buffer);
+    while (count > 0) {
+      digest.update(buffer, 0, count);
+      count = input.readIntoSync(buffer);
+    }
+  } finally {
+    input.closeSync();
+  }
+  final output = Uint8List(digest.digestSize);
+  digest.doFinal(output, 0);
+  return output.map((b) => b.toRadixString(16).padLeft(2, '0')).join();
 }

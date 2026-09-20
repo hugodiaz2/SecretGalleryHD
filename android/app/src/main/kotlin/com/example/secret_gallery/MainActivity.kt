@@ -17,6 +17,9 @@ class MainActivity: FlutterFragmentActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        if (!flutterEngine.plugins.has(VaultCryptoPlugin::class.java)) {
+            flutterEngine.plugins.add(VaultCryptoPlugin())
+        }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "secret_gallery/media")
             .setMethodCallHandler { call, result ->
                 when (call.method) {

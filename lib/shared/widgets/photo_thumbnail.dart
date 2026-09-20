@@ -71,7 +71,7 @@ class _PhotoThumbnailState extends State<PhotoThumbnail> {
     void start() {
       if (!mounted || version != _requestVersion) return;
       if (Scrollable.recommendDeferredLoadingForContext(context)) {
-        _loadTimer = Timer(const Duration(milliseconds: 80), start);
+        _loadTimer = Timer(const Duration(milliseconds: 32), start);
       } else {
         _load();
       }
@@ -140,8 +140,8 @@ class _PhotoThumbnailState extends State<PhotoThumbnail> {
     return LayoutBuilder(
       builder: (context, constraints) {
         final dpr = MediaQuery.devicePixelRatioOf(context);
-        final widthPx = (constraints.maxWidth * dpr).round().clamp(96, 512);
-        final heightPx = (constraints.maxHeight * dpr).round().clamp(96, 512);
+        final widthPx = (constraints.maxWidth * dpr).round().clamp(96, 384);
+        final heightPx = (constraints.maxHeight * dpr).round().clamp(96, 384);
 
         return GestureDetector(
           onTap: widget.onTap,

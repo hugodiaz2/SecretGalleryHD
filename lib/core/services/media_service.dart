@@ -225,10 +225,10 @@ class MediaService {
           final largest = descriptor.width > descriptor.height
               ? descriptor.width
               : descriptor.height;
-          final scale = largest > 512 ? 512 / largest : 1.0;
+          final scale = largest > 384 ? 384 / largest : 1.0;
           codec = await descriptor.instantiateCodec(
-            targetWidth: (descriptor.width * scale).round().clamp(1, 512),
-            targetHeight: (descriptor.height * scale).round().clamp(1, 512),
+            targetWidth: (descriptor.width * scale).round().clamp(1, 384),
+            targetHeight: (descriptor.height * scale).round().clamp(1, 384),
           );
           image = (await codec.getNextFrame()).image;
           final data = await image.toByteData(format: ui.ImageByteFormat.png);
