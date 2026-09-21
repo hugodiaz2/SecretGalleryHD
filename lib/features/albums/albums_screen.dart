@@ -208,10 +208,10 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
-        title: Text('Eliminar carpeta',
+        title: Text('Enviar carpeta a papelera',
             style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: Text(
-          '¿Eliminar "${folder['name']}" y todo su contenido?',
+          '¿Enviar "${folder['name']}" y todo su contenido a la papelera?',
           style: GoogleFonts.poppins(color: context.colors.textSecondary),
         ),
         actions: [
@@ -222,7 +222,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Eliminar',
+            child: Text('Enviar a papelera',
                 style: GoogleFonts.poppins(color: Colors.redAccent)),
           ),
         ],
@@ -246,7 +246,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     if (dest == null) return;
     for (final id in _selectedFolderIds) {
       await _db.updateFolder(id, {
-        'parent_id': dest['id'],
+        'parent_id': dest['is_root'] == true ? null : dest['id'],
         'updated_at': DateTime.now().millisecondsSinceEpoch,
       });
     }
@@ -262,10 +262,10 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
-        title: Text('Eliminar carpetas',
+        title: Text('Enviar carpetas a papelera',
             style: GoogleFonts.poppins(color: context.colors.textPrimary)),
         content: Text(
-          '¿Eliminar ${_selectedFolderIds.length} carpeta${_selectedFolderIds.length == 1 ? '' : 's'} y todo su contenido?',
+          '¿Enviar ${_selectedFolderIds.length} carpeta${_selectedFolderIds.length == 1 ? '' : 's'} y todo su contenido a la papelera?',
           style: GoogleFonts.poppins(color: context.colors.textSecondary),
         ),
         actions: [
@@ -276,7 +276,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: Text('Eliminar',
+            child: Text('Enviar a papelera',
                 style: GoogleFonts.poppins(color: Colors.redAccent)),
           ),
         ],
@@ -418,6 +418,14 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
                     color: context.colors.textPrimary, fontSize: 13)),
           ]),
         ),
+        const PopupMenuItem(
+          value: 'unlock',
+          child: Row(children: [
+            Icon(Icons.lock_open_outlined, size: 18),
+            SizedBox(width: 10),
+            Text('Desbloquear todo'),
+          ]),
+        ),
         PopupMenuItem(
           value: 'rename',
           child: Row(children: [
@@ -450,6 +458,9 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         builder: (_) => CoverPickerSheet(folderId: folder['id']),
       );
       if (changed == true) _load();
+    }
+    if (selected == 'unlock' && mounted) {
+      await confirmUnlockFolders(context, [folder['id'] as int], onDone: _load);
     }
     if (selected == 'rename') _renameFolder(folder);
     if (selected == 'delete') _deleteFolder(folder);
@@ -718,7 +729,7 @@ void _showDesignSheet() {
                     fontSize: 13,
                     fontWeight: FontWeight.w500)),
             subtitle: Text(
-              '$count foto${count == 1 ? '' : 's'}${subs > 0 ? ' · $subs subcarpeta${subs == 1 ? '' : 's'}' : ''}',
+              '$count foto${count == 1 ? '' : 's'}',
               style: GoogleFonts.poppins(
                   color: context.colors.textMuted, fontSize: 11),
             ),
@@ -876,6 +887,16 @@ void _showDesignSheet() {
                   : const SizedBox.shrink(),
           actions: [
             if (_selectingFolders) ...[
+              IconButton(
+                tooltip: 'Desbloquear todo el contenido',
+                icon: const Icon(Icons.lock_open_outlined),
+                onPressed: _selectedFolderIds.isEmpty ? null : () =>
+                    confirmUnlockFolders(context, _selectedFolderIds.toList(), onDone: () {
+                      if (!mounted) return;
+                      setState(() { _selectingFolders = false; _selectedFolderIds.clear(); });
+                      _load();
+                    }),
+              ),
               IconButton(
                 icon: Icon(Icons.drive_file_move_outline,
                     color: context.colors.textPrimary),

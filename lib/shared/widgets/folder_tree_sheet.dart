@@ -1,6 +1,9 @@
+import 'dart:async';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
+import '../../core/services/media_service.dart';
 import '../../core/theme/app_colors.dart';
 
 class FolderTreeSheet extends StatefulWidget {
@@ -23,6 +26,7 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
   final Map<int, Map<String, dynamic>> _byId = {};
   final Map<int?, List<Map<String, dynamic>>> _children = {};
   final Set<int> _blocked = {};
+  final Map<int, Future<String?>> _covers = {};
   int? _parentId;
   bool _loading = true;
   bool _failed = false;
@@ -100,7 +104,7 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
       names.add(folder['name'] as String);
       id = folder['parent_id'] as int?;
     }
-    return ['Carpetas', ...names.reversed].join(' / ');
+    return ['Inicio', ...names.reversed].join(' / ');
   }
 
   void _clearSearch() {
@@ -131,12 +135,14 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
   Widget build(BuildContext context) {
     final colors = context.colors;
     final accent = Theme.of(context).colorScheme.primary;
-    final destination = _byId[_parentId];
+    final destination = _parentId == null
+        ? <String, dynamic>{'id': 0, 'name': 'Inicio', 'is_root': true}
+        : _byId[_parentId];
     final canMove = !_searching &&
         !_loading &&
         !_failed &&
         destination != null &&
-        _parentId != widget.currentFolderId &&
+        destination['id'] != (widget.currentFolderId ?? 0) &&
         !_blocked.contains(_parentId);
     final folders = _visibleFolders;
     return PopScope(
@@ -306,14 +312,22 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
                                                               ? accent
                                                               : colors.border),
                                                     ),
-                                                    child: Icon(
-                                                        hasChildren
-                                                            ? Icons
-                                                                .folder_copy_outlined
-                                                            : Icons
-                                                                .folder_outlined,
-                                                        size: 32,
-                                                        color: accent),
+                                                    child: ClipRRect(
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                              9),
+                                                      child: _DestinationCover(
+                                                        key: ValueKey(id),
+                                                        cover: _covers.putIfAbsent(
+                                                            id,
+                                                            () => DBHelper
+                                                                .instance
+                                                                .getCoverPhoto(
+                                                                    id)),
+                                                        hasChildren:
+                                                            hasChildren,
+                                                      ),
+                                                    ),
                                                   ),
                                                 ),
                                                 const SizedBox(height: 4),
@@ -345,7 +359,10 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
                                 _parentId != null
                             ? 'Esta es la carpeta actual'
                             : _parentId == null
-                                ? 'Abre una carpeta de destino'
+                                ? (widget.currentFolderId == null ||
+                                        widget.currentFolderId == 0
+                                    ? 'Ya estás en Inicio'
+                                    : 'Mover a Inicio')
                                 : 'Mover aquí'),
                       ),
                     ),
@@ -357,5 +374,89 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
         );
       }),
     );
+  }
+}
+
+/// Uses the shared small-thumbnail cache, without retaining full originals.
+class _DestinationCover extends StatefulWidget {
+  final Future<String?> cover;
+  final bool hasChildren;
+
+  const _DestinationCover(
+      {super.key, required this.cover, required this.hasChildren});
+
+  @override
+  State<_DestinationCover> createState() => _DestinationCoverState();
+}
+
+class _DestinationCoverState extends State<_DestinationCover> {
+  Uint8List? _bytes;
+  Timer? _timer;
+
+  @override
+  void initState() {
+    super.initState();
+    _timer = Timer(Duration.zero, _start);
+  }
+
+  void _start() {
+    if (!mounted) return;
+    if (Scrollable.recommendDeferredLoadingForContext(context)) {
+      _timer = Timer(const Duration(milliseconds: 32), _start);
+    } else {
+      _load();
+    }
+  }
+
+  Future<void> _load() async {
+    try {
+      final path = await widget.cover;
+      if (!mounted || path == null || path.isEmpty) return;
+      final media = MediaService.instance;
+      final video = MediaService.isVideoPath(path);
+      final cached = media.cachedThumbnail(path, video: video);
+      final bytes = cached ??
+          (video
+              ? await media.getVideoThumbnail(path, 'cover.mp4',
+                  isNeeded: () => mounted)
+              : await media.getPhotoThumbnail(path, isNeeded: () => mounted));
+      if (mounted && bytes != null) setState(() => _bytes = bytes);
+    } catch (_) {
+      // A missing or unreadable cover must not prevent choosing a destination.
+    }
+  }
+
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  Widget _fallback(BuildContext context) => Center(
+        child: Icon(
+            widget.hasChildren
+                ? Icons.folder_copy_outlined
+                : Icons.folder_outlined,
+            size: 32,
+            color: Theme.of(context).colorScheme.primary),
+      );
+
+  @override
+  Widget build(BuildContext context) {
+    if (_bytes == null) return _fallback(context);
+    return LayoutBuilder(builder: (context, constraints) {
+      final size =
+          (constraints.maxWidth * MediaQuery.devicePixelRatioOf(context))
+              .round()
+              .clamp(64, 384);
+      return Image.memory(
+        _bytes!,
+        fit: BoxFit.cover,
+        cacheWidth: size,
+        gaplessPlayback: true,
+        filterQuality: FilterQuality.low,
+        errorBuilder: (_, __, ___) => _fallback(context),
+      );
+    });
   }
 }

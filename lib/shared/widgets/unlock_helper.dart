@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/services/media_service.dart';
+import '../../core/database/db_helper.dart';
 
 bool _unlockDialogOpen = false;
 
 Future<void> confirmUnlock(
     BuildContext context, List<Map<String, dynamic>> photos,
-    {VoidCallback? onDone}) async {
+    {VoidCallback? onDone, bool preserveFolders = false}) async {
   if (_unlockDialogOpen) return;
   _unlockDialogOpen = true;
   try {
@@ -36,6 +37,13 @@ Future<void> confirmUnlock(
                   : 'Los $count archivos seleccionados serán desencriptados y restaurados en tu galería.',
               style: GoogleFonts.poppins(color: Colors.white70, fontSize: 13),
             ),
+            if (preserveFolders) ...[
+              const SizedBox(height: 12),
+              Text(
+                'Se conservarán la carpeta y todas sus subcarpetas. Solo los archivos desbloqueados saldrán de la bóveda. Si alguno no puede desbloquearse, permanecerá en su carpeta.',
+                style: GoogleFonts.poppins(color: Colors.white70, fontSize: 13),
+              ),
+            ],
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(10),
@@ -105,7 +113,8 @@ Future<void> confirmUnlock(
       final result = await MediaService.instance.unlockPhotos(photos);
       changed = result.completed.isNotEmpty;
       if (result.failed.isNotEmpty) {
-        message = 'No se pudieron restaurar algunos archivos. Se conservan en privado.';
+        message =
+            'No se pudieron restaurar algunos archivos. Se conservan en privado.';
       } else if (result.cleanupWarnings.isNotEmpty) {
         message = 'No se pudieron limpiar algunos archivos temporales.';
       }
@@ -122,5 +131,25 @@ Future<void> confirmUnlock(
     if (changed) onDone?.call();
   } finally {
     _unlockDialogOpen = false;
+  }
+}
+
+Future<void> confirmUnlockFolders(BuildContext context, Iterable<int> folderIds,
+    {VoidCallback? onDone}) async {
+  try {
+    final photos =
+        await DBHelper.instance.getPhotosInFolders(folderIds.toList());
+    if (!context.mounted) return;
+    if (photos.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('Estas carpetas no contienen archivos.')));
+      return;
+    }
+    await confirmUnlock(context, photos, onDone: onDone, preserveFolders: true);
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo leer el contenido de las carpetas.')));
+    }
   }
 }

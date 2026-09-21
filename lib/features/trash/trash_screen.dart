@@ -39,11 +39,16 @@ class _TrashScreenState extends State<TrashScreen> {
 
   int get _crossAxisCount {
     switch (_viewType) {
-      case GridViewType.grid3: return 3;
-      case GridViewType.grid4: return 4;
-      case GridViewType.grid5: return 5;
-      case GridViewType.grid6: return 6;
-      default: return 3;
+      case GridViewType.grid3:
+        return 3;
+      case GridViewType.grid4:
+        return 4;
+      case GridViewType.grid5:
+        return 5;
+      case GridViewType.grid6:
+        return 6;
+      default:
+        return 3;
     }
   }
 
@@ -54,9 +59,8 @@ class _TrashScreenState extends State<TrashScreen> {
   }
 
   Future<void> _restoreSelected() async {
-    final toRestore = _items
-        .where((i) => _selectedIds.contains(i['id']))
-        .toList();
+    final toRestore =
+        _items.where((i) => _selectedIds.contains(i['id'])).toList();
     for (final item in toRestore) {
       await _db.restoreFromTrash(item);
     }
@@ -109,13 +113,10 @@ class _TrashScreenState extends State<TrashScreen> {
     );
     if (confirm != true) return;
 
-    final toDelete = _items
-        .where((i) => _selectedIds.contains(i['id']))
-        .toList();
+    final toDelete =
+        _items.where((i) => _selectedIds.contains(i['id'])).toList();
     for (final item in toDelete) {
-      await MediaService.instance
-          .deleteEncryptedFile(item['encrypted_path']);
-      await _db.deleteFromTrash(item['id']);
+      await MediaService.instance.deleteTrashItem(item);
     }
     setState(() {
       _selecting = false;
@@ -152,10 +153,9 @@ class _TrashScreenState extends State<TrashScreen> {
     if (confirm != true) return;
 
     for (final item in _items) {
-      await MediaService.instance
-          .deleteEncryptedFile(item['encrypted_path']);
+      await MediaService.instance.deleteTrashItem(item);
     }
-    await _db.emptyTrash();
+
     _load();
   }
 
@@ -202,19 +202,16 @@ class _TrashScreenState extends State<TrashScreen> {
               IconButton(
                 icon: const Icon(Icons.restore, color: Colors.green),
                 tooltip: 'Restaurar',
-                onPressed:
-                    _selectedIds.isEmpty ? null : _restoreSelected,
+                onPressed: _selectedIds.isEmpty ? null : _restoreSelected,
               ),
               IconButton(
                 icon: Icon(Icons.select_all, color: context.colors.textPrimary),
-                onPressed: () => setState(() => _selectedIds
-                    .addAll(_items.map((i) => i['id'] as int))),
+                onPressed: () => setState(() =>
+                    _selectedIds.addAll(_items.map((i) => i['id'] as int))),
               ),
               IconButton(
-                icon: const Icon(Icons.delete_forever,
-                    color: Colors.redAccent),
-                onPressed:
-                    _selectedIds.isEmpty ? null : _deleteSelected,
+                icon: const Icon(Icons.delete_forever, color: Colors.redAccent),
+                onPressed: _selectedIds.isEmpty ? null : _deleteSelected,
               ),
             ] else if (_items.isNotEmpty) ...[
               IconButton(
@@ -252,8 +249,8 @@ class _TrashScreenState extends State<TrashScreen> {
                     decoration: BoxDecoration(
                       color: context.colors.surface,
                       borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: context.colors.textGhost, width: 1),
+                      border:
+                          Border.all(color: context.colors.textGhost, width: 1),
                     ),
                     child: Row(
                       children: [
@@ -275,8 +272,7 @@ class _TrashScreenState extends State<TrashScreen> {
                   Expanded(
                     child: GridView.builder(
                       padding: const EdgeInsets.all(2),
-                      gridDelegate:
-                          SliverGridDelegateWithFixedCrossAxisCount(
+                      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                         crossAxisCount: _crossAxisCount,
                         mainAxisSpacing: 2,
                         crossAxisSpacing: 2,
@@ -287,8 +283,7 @@ class _TrashScreenState extends State<TrashScreen> {
                         final item = _items[i];
                         final id = item['id'] as int;
                         final isSelected = _selectedIds.contains(id);
-                        final isVideo =
-                            _isVideo(item['original_name']);
+                        final isVideo = _isVideo(item['original_name']);
 
                         return GestureDetector(
                           onTap: () {
@@ -327,7 +322,10 @@ class _TrashScreenState extends State<TrashScreen> {
                                 ),
                               if (isSelected)
                                 Container(
-                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.4)),
+                                    color: Theme.of(context)
+                                        .colorScheme
+                                        .primary
+                                        .withOpacity(0.4)),
                               if (isSelected)
                                 Positioned(
                                   top: 4,
@@ -337,7 +335,8 @@ class _TrashScreenState extends State<TrashScreen> {
                                     height: 20,
                                     decoration: BoxDecoration(
                                       shape: BoxShape.circle,
-                                      color: Theme.of(context).colorScheme.primary,
+                                      color:
+                                          Theme.of(context).colorScheme.primary,
                                     ),
                                     child: const Icon(Icons.check,
                                         color: Colors.white, size: 13),
@@ -350,13 +349,13 @@ class _TrashScreenState extends State<TrashScreen> {
                                 right: 0,
                                 child: Container(
                                   color: Colors.black54,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 3),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 3),
                                   child: Text(
-                                    _formatDate(
-                                        item['deleted_at'] as int),
+                                    _formatDate(item['deleted_at'] as int),
                                     style: TextStyle(
-                                        color: context.colors.textPrimary.withOpacity(0.54),
+                                        color: context.colors.textPrimary
+                                            .withOpacity(0.54),
                                         fontSize: 8),
                                     textAlign: TextAlign.center,
                                   ),
@@ -379,14 +378,14 @@ class _TrashScreenState extends State<TrashScreen> {
       context: context,
       backgroundColor: context.colors.surface,
       shape: const RoundedRectangleBorder(
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(20))),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
       builder: (_) => SafeArea(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Container(
-              width: 40, height: 4,
+              width: 40,
+              height: 4,
               margin: const EdgeInsets.symmetric(vertical: 12),
               decoration: BoxDecoration(
                   color: context.colors.textFaint,
@@ -395,13 +394,15 @@ class _TrashScreenState extends State<TrashScreen> {
             Text(
               item['original_name'] ?? 'Archivo',
               style: GoogleFonts.poppins(
-                  color: context.colors.textPrimary.withOpacity(0.54), fontSize: 12),
+                  color: context.colors.textPrimary.withOpacity(0.54),
+                  fontSize: 12),
             ),
             const SizedBox(height: 8),
             ListTile(
               leading: const Icon(Icons.restore, color: Colors.green),
               title: Text('Restaurar',
-                  style: GoogleFonts.poppins(color: context.colors.textPrimary)),
+                  style:
+                      GoogleFonts.poppins(color: context.colors.textPrimary)),
               onTap: () async {
                 Navigator.pop(context);
                 await _db.restoreFromTrash(item);
@@ -409,26 +410,24 @@ class _TrashScreenState extends State<TrashScreen> {
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
-                      backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
+                      backgroundColor:
+                          Theme.of(context).extension<AppColors>()!.surface,
                       content: Text('Archivo restaurado',
-                          style:
-                              GoogleFonts.poppins(color: context.colors.textPrimary)),
+                          style: GoogleFonts.poppins(
+                              color: context.colors.textPrimary)),
                     ),
                   );
                 }
               },
             ),
             ListTile(
-              leading: const Icon(Icons.delete_forever,
-                  color: Colors.redAccent),
+              leading:
+                  const Icon(Icons.delete_forever, color: Colors.redAccent),
               title: Text('Eliminar permanentemente',
-                  style:
-                      GoogleFonts.poppins(color: Colors.redAccent)),
+                  style: GoogleFonts.poppins(color: Colors.redAccent)),
               onTap: () async {
                 Navigator.pop(context);
-                await MediaService.instance
-                    .deleteEncryptedFile(item['encrypted_path']);
-                await _db.deleteFromTrash(item['id']);
+                await MediaService.instance.deleteTrashItem(item);
                 _load();
               },
             ),
@@ -460,6 +459,7 @@ class _TrashThumbState extends State<_TrashThumb> {
   @override
   void initState() {
     super.initState();
+    if (widget.item['type'] == 'folder') return;
     MediaService.instance
         .getPhotoThumbnail(widget.item['encrypted_path'])
         .then((b) {
@@ -469,8 +469,26 @@ class _TrashThumbState extends State<_TrashThumb> {
 
   @override
   Widget build(BuildContext context) {
+    if (widget.item['type'] == 'folder') {
+      return ColoredBox(
+        color: context.colors.surfaceHigh,
+        child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(Icons.folder,
+              color: Theme.of(context).colorScheme.primary, size: 40),
+          Padding(
+              padding: const EdgeInsets.all(6),
+              child: Text(widget.item['original_name'] as String? ?? 'Carpeta',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                      color: context.colors.textPrimary, fontSize: 11))),
+        ]),
+      );
+    }
     return _bytes != null
-        ? Image.memory(_bytes!, fit: BoxFit.cover,
+        ? Image.memory(_bytes!,
+            fit: BoxFit.cover,
             errorBuilder: (_, __, ___) => ColoredBox(
                 color: context.colors.surfaceHigh,
                 child: Icon(Icons.broken_image,

@@ -1,3 +1,4 @@
+import 'about_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
@@ -440,6 +441,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
             },
           ),
 
+          _buildSectionHeader('Información'),
+          _buildTile(
+            icon: Icons.info_outline,
+            iconColor: Theme.of(context).colorScheme.primary,
+            title: 'Acerca de',
+            subtitle: 'Privacidad y cómo protegemos tus archivos',
+            trailing: Icon(Icons.chevron_right, color: context.colors.textMuted),
+            onTap: () => Navigator.push(context,
+                MaterialPageRoute(builder: (_) => const AboutScreen())),
+          ),
           const SizedBox(height: 40),
           Center(
             child: Text('Secret Gallery HD v1.0.0',

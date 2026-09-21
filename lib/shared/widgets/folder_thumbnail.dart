@@ -136,169 +136,104 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
   @override
   Widget build(BuildContext context) {
     final count = (widget.folder['total_count'] as int?) ?? 0;
-    final subs = (widget.folder['sub_count'] as int?) ?? 0;
     final name = widget.folder['name'] as String;
-    final isSelected = widget.isSelected;
+    final accent = Theme.of(context).colorScheme.primary;
+    final hasCover = widget.showPreview && !_loading && _coverBytes != null;
+
+    Widget placeholder() => const ColoredBox(
+          color: Color(0xFF242424),
+          child: Center(
+              child:
+                  Icon(Icons.folder_outlined, color: Colors.white54, size: 30)),
+        );
 
     return GestureDetector(
       onTap: widget.onTap,
       onLongPress: widget.onLongPress,
-      child: Container(
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF1A2A3A) : const Color(0xFF1E1E1E),
-          border: isSelected ? Border.all(color: Colors.blue, width: 2) : null,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Área de imagen/icono ──
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  // Fondo / miniatura
-                  _loading
-                      ? Container(color: const Color(0xFF2A2A2A))
-                      : !widget.showPreview
-                          ? Container(color: const Color(0xFF2A2A2A))
-                          : _coverBytes != null
-                              ? Stack(
-                                  fit: StackFit.expand,
-                                  children: [
-                                    RepaintBoundary(
-                                      child: LayoutBuilder(
-                                        builder: (context, constraints) {
-                                          final dpr =
-                                              MediaQuery.devicePixelRatioOf(
-                                                  context);
-                                          final widthPx =
-                                              (constraints.maxWidth * dpr)
-                                                  .round()
-                                                  .clamp(96, 384);
-                                          final heightPx =
-                                              (constraints.maxHeight * dpr)
-                                                  .round()
-                                                  .clamp(96, 384);
-
-                                          return Image.memory(
-                                            _coverBytes!,
-                                            fit: BoxFit.cover,
-                                            alignment: Alignment.center,
-                                            cacheWidth: widthPx,
-                                            cacheHeight: heightPx,
-                                            filterQuality: FilterQuality.low,
-                                            isAntiAlias: false,
-                                            errorBuilder: (_, __, ___) =>
-                                                Container(
-                                              color: const Color(0xFF2A2A2A),
-                                            ),
-                                          );
-                                        },
-                                      ),
-                                    ),
-                                    Container(
-                                      color: Colors.black.withOpacity(0.3),
-                                    ),
-                                  ],
-                                )
-                              : Container(color: const Color(0xFF2A2A2A)),
-
-                  // Icono candado/carpeta centrado
-                  Center(
-                    child: Icon(
-                      _coverBytes != null
-                          ? (subs > 0 ? Icons.folder_copy : Icons.folder)
-                          : Icons.lock_rounded,
-                      color: _coverBytes != null
-                          ? Colors.white.withOpacity(0.85)
-                          : isSelected
-                              ? Colors.blue
-                              : Colors.white54,
-                      size: 30,
-                      shadows: _coverBytes != null
-                          ? const [Shadow(color: Colors.black54, blurRadius: 8)]
-                          : null,
-                    ),
-                  ),
-
-                  // Badge triángulo con conteo
-                  if (count > 0)
-                    Positioned(
-                      top: 0,
-                      left: 0,
-                      child: CustomPaint(
-                        size: const Size(40, 40),
-                        painter: _TriangleBadge(count.toString()),
-                      ),
-                    ),
-
-                  // Check de selección
-                  if (isSelected)
-                    Positioned(
-                      top: 4,
-                      right: 4,
-                      child: Container(
-                        width: 20,
-                        height: 20,
-                        decoration: const BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: Colors.blue,
-                        ),
-                        child: const Icon(Icons.check,
-                            color: Colors.white, size: 13),
-                      ),
-                    ),
-                ],
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(8),
+        child: Stack(fit: StackFit.expand, children: [
+          if (hasCover)
+            RepaintBoundary(
+              child: LayoutBuilder(builder: (context, constraints) {
+                final dpr = MediaQuery.devicePixelRatioOf(context);
+                return Image.memory(
+                  _coverBytes!,
+                  fit: BoxFit.cover,
+                  alignment: Alignment.center,
+                  cacheWidth:
+                      (constraints.maxWidth * dpr).round().clamp(96, 384),
+                  cacheHeight:
+                      (constraints.maxHeight * dpr).round().clamp(96, 384),
+                  filterQuality: FilterQuality.low,
+                  gaplessPlayback: true,
+                  errorBuilder: (_, __, ___) => placeholder(),
+                );
+              }),
+            )
+          else
+            placeholder(),
+          if (count > 0)
+            Positioned(
+              top: 0,
+              left: 0,
+              child: CustomPaint(
+                size: const Size(40, 40),
+                painter: _TriangleBadge(count.toString()),
               ),
             ),
-
-            // ── Nombre y menú ──
-            Container(
-              color: const Color(0xFF0F0F0F),
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          name,
-                          style: GoogleFonts.poppins(
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: Container(
+              color: const Color(0x66000000),
+              padding: const EdgeInsets.only(left: 6),
+              child: Row(children: [
+                Expanded(
+                    child: Text(name,
+                        style: GoogleFonts.poppins(
                             color: Colors.white,
                             fontSize: 10,
-                            fontWeight: FontWeight.w500,
-                          ),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        if (subs > 0)
-                          Text(
-                            '$subs subcarpeta${subs == 1 ? '' : 's'}',
-                            style: GoogleFonts.poppins(
-                              color: Colors.white38,
-                              fontSize: 8,
-                            ),
-                          ),
-                      ],
-                    ),
-                  ),
-                  GestureDetector(
-                    onTapDown: (d) => widget.onMenuTap(d.globalPosition),
+                            fontWeight: FontWeight.w500),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis)),
+                Tooltip(
+                  message: 'Opciones de carpeta',
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTapDown: (details) =>
+                        widget.onMenuTap(details.globalPosition),
                     child: const Padding(
-                      padding: EdgeInsets.all(2),
-                      child: Icon(
-                        Icons.more_vert,
-                        color: Colors.white54,
-                        size: 14,
-                      ),
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 7),
+                      child:
+                          Icon(Icons.more_vert, color: Colors.white, size: 16),
                     ),
                   ),
-                ],
+                ),
+              ]),
+            ),
+          ),
+          if (widget.isSelected) ...[
+            IgnorePointer(
+                child: DecoratedBox(
+                    decoration: BoxDecoration(
+              border: Border.all(color: accent, width: 2),
+              borderRadius: BorderRadius.circular(8),
+            ))),
+            Positioned(
+              top: 4,
+              right: 4,
+              child: Container(
+                width: 20,
+                height: 20,
+                decoration:
+                    BoxDecoration(shape: BoxShape.circle, color: accent),
+                child: const Icon(Icons.check, color: Colors.white, size: 13),
               ),
             ),
           ],
-        ),
+        ]),
       ),
     );
   }
@@ -316,22 +251,18 @@ class _TriangleBadge extends CustomPainter {
         ..lineTo(size.width, 0)
         ..lineTo(0, size.height)
         ..close(),
-      Paint()..color = const Color(0xFF1565C0),
+      Paint()..color = const Color(0x66000000),
     );
-    (TextPainter(
+    final label = TextPainter(
       text: TextSpan(
-        text: count,
-        style: const TextStyle(
-          color: Colors.white,
-          fontSize: 10,
-          fontWeight: FontWeight.bold,
-        ),
-      ),
+          text: count,
+          style: const TextStyle(
+              color: Colors.white, fontSize: 10, fontWeight: FontWeight.w600)),
       textDirection: TextDirection.ltr,
-    )..layout())
-        .paint(canvas, const Offset(2, 1));
+    )..layout();
+    label.paint(canvas, const Offset(3, 2));
   }
 
   @override
-  bool shouldRepaint(_TriangleBadge o) => o.count != count;
+  bool shouldRepaint(_TriangleBadge oldDelegate) => oldDelegate.count != count;
 }

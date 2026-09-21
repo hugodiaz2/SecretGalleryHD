@@ -33,7 +33,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   @override
   void initState() {
     super.initState();
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _initVideo();
   }
 
@@ -54,9 +54,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       if (bytes == null) {
         if (mounted) {
           setState(() {
-          _error = 'No se pudo cargar el video';
-          _loading = false;
-        });
+            _error = 'No se pudo cargar el video';
+            _loading = false;
+          });
         }
         return;
       }
@@ -75,6 +75,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
         autoPlay: true,
         looping: false,
         allowFullScreen: true,
+        systemOverlaysAfterFullScreen: SystemUiOverlay.values,
         allowMuting: true,
         showControlsOnInitialize: true,
         placeholder: Container(color: Colors.black),
@@ -85,9 +86,9 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     } catch (e) {
       if (mounted) {
         setState(() {
-        _error = 'Error al reproducir: $e';
-        _loading = false;
-      });
+          _error = 'Error al reproducir: $e';
+          _loading = false;
+        });
       }
     }
   }
@@ -176,10 +177,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
               _barAction(Icons.share_outlined, 'Compartir', _shareVideo),
-              _barAction(
-                  Icons.drive_file_move_outline, 'Mover', _moveVideo),
-              _barAction(
-                  Icons.lock_open_outlined, 'Desbloquear', _unlockVideo),
+              _barAction(Icons.drive_file_move_outline, 'Mover', _moveVideo),
+              _barAction(Icons.lock_open_outlined, 'Desbloquear', _unlockVideo),
               _barAction(Icons.delete_outline, 'Eliminar', _deleteVideo),
               _barAction(Icons.info_outline, 'Información', _showInfo),
             ],
@@ -190,23 +189,27 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   }
 
   Widget _barAction(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
+    return Expanded(
+        child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, color: Colors.white, size: 23),
             const SizedBox(height: 4),
             Text(label,
-                style: GoogleFonts.poppins(
-                    color: Colors.white70, fontSize: 10)),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style:
+                    GoogleFonts.poppins(color: Colors.white70, fontSize: 10)),
           ],
         ),
       ),
-    );
+    ));
   }
 
   // ── Compartir ─────────────────────────────────────────────
@@ -252,8 +255,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
-        title: Text('Eliminar',
-            style: GoogleFonts.poppins(color: Colors.white)),
+        title:
+            Text('Eliminar', style: GoogleFonts.poppins(color: Colors.white)),
         content: Text(
           noTrash
               ? '¿Eliminar este video permanentemente?'
@@ -292,8 +295,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     _videoController?.pause();
     int sizeBytes = 0;
     try {
-      sizeBytes =
-          await File(widget.video['encrypted_path'] as String).length();
+      sizeBytes = await File(widget.video['encrypted_path'] as String).length();
     } catch (_) {}
     final sizeText = sizeBytes > 1024 * 1024
         ? '${(sizeBytes / (1024 * 1024)).toStringAsFixed(1)} MB'

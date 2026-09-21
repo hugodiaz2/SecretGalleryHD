@@ -195,11 +195,18 @@ class MediaService {
 
   // ── Eliminar carpeta y todo su contenido ─────────────────
   Future<void> deleteFolder(int folderId) async {
-    final paths = await _db.getEncryptedPathsInFolder(folderId);
-    for (final path in paths) {
-      await deleteEncryptedFile(path);
+    await _db.moveFolderToTrash(folderId);
+    clearThumbnailCaches();
+  }
+
+  Future<void> deleteTrashItem(Map<String, dynamic> item) async {
+    // Keep the trash record if a file cannot be removed, allowing a retry.
+    for (final path in _db.trashPaths(item)) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
     }
-    await _db.deleteFolder(folderId);
+    await _db.deleteFromTrash(item['id'] as int);
+    clearThumbnailCaches();
   }
 
   // ── Desbloquear y restaurar a galería ───────────────────

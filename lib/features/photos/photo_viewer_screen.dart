@@ -37,7 +37,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     super.initState();
     _currentIndex = widget.initialIndex;
     _pageController = PageController(initialPage: widget.initialIndex);
-    SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersiveSticky);
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
   }
 
   @override
@@ -47,13 +47,17 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     super.dispose();
   }
 
-  void _toggleBars() => setState(() => _showBars = !_showBars);
+  void _toggleBars() {
+    setState(() => _showBars = !_showBars);
+    SystemChrome.setEnabledSystemUIMode(
+      _showBars ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+    );
+  }
 
   bool _isVideo(Map<String, dynamic> photo) {
     final name = (photo['original_name'] ?? '') as String;
     final ext = name.split('.').last.toLowerCase();
-    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv']
-        .contains(ext);
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'].contains(ext);
   }
 
   void _openVideoPlayer(Map<String, dynamic> photo) {
@@ -91,8 +95,8 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
                     ),
                   Text(
                     '${_currentIndex + 1} / ${widget.photos.length}',
-                    style: GoogleFonts.poppins(
-                        color: Colors.white, fontSize: 14),
+                    style:
+                        GoogleFonts.poppins(color: Colors.white, fontSize: 14),
                   ),
                 ],
               ),
@@ -107,6 +111,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
               ],
             )
           : null,
+      bottomNavigationBar: _showBars ? _buildBottomBar(currentPhoto) : null,
       body: Stack(
         children: [
           GestureDetector(
@@ -128,13 +133,6 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
               },
             ),
           ),
-          if (_showBars)
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: _buildBottomBar(currentPhoto),
-            ),
         ],
       ),
     );
@@ -151,8 +149,8 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _barAction(Icons.share_outlined, 'Compartir',
-                  () => _sharePhoto(photo)),
+              _barAction(
+                  Icons.share_outlined, 'Compartir', () => _sharePhoto(photo)),
               _barAction(Icons.drive_file_move_outline, 'Mover',
                   () => _movePhoto(photo)),
               _barAction(Icons.lock_open_outlined, 'Desbloquear',
@@ -169,23 +167,27 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   }
 
   Widget _barAction(IconData icon, String label, VoidCallback onTap) {
-    return InkWell(
+    return Expanded(
+        child: InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, color: Colors.white, size: 23),
             const SizedBox(height: 4),
             Text(label,
-                style: GoogleFonts.poppins(
-                    color: Colors.white70, fontSize: 10)),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style:
+                    GoogleFonts.poppins(color: Colors.white70, fontSize: 10)),
           ],
         ),
       ),
-    );
+    ));
   }
 
   // ── Compartir ─────────────────────────────────────────────
@@ -210,8 +212,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
           FolderTreeSheet(currentFolderId: photo['folder_id'] as int?),
     );
     if (dest == null || !mounted) return;
-    await DBHelper.instance
-        .movePhoto(photo['id'] as int, dest['id'] as int);
+    await DBHelper.instance.movePhoto(photo['id'] as int, dest['id'] as int);
     if (mounted) Navigator.pop(context);
   }
 
@@ -233,8 +234,8 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF1E1E1E),
-        title: Text('Eliminar',
-            style: GoogleFonts.poppins(color: Colors.white)),
+        title:
+            Text('Eliminar', style: GoogleFonts.poppins(color: Colors.white)),
         content: Text(
           noTrash
               ? '¿Eliminar este archivo permanentemente?'
@@ -384,7 +385,8 @@ class _VideoThumbPageState extends State<_VideoThumbPage> {
   @override
   Widget build(BuildContext context) {
     final name = (widget.photo['original_name'] ?? 'Video') as String;
-    final maxDim = MediaQuery.sizeOf(context).shortestSide * MediaQuery.devicePixelRatioOf(context);
+    final maxDim = MediaQuery.sizeOf(context).shortestSide *
+        MediaQuery.devicePixelRatioOf(context);
 
     return GestureDetector(
       onTap: widget.onPlayTap,
@@ -422,8 +424,7 @@ class _VideoThumbPageState extends State<_VideoThumbPage> {
               decoration: BoxDecoration(
                 shape: BoxShape.circle,
                 color: Colors.black.withOpacity(0.6),
-                border:
-                    Border.all(color: Colors.white70, width: 2),
+                border: Border.all(color: Colors.white70, width: 2),
               ),
               child: const Icon(
                 Icons.play_arrow_rounded,
@@ -443,9 +444,7 @@ class _VideoThumbPageState extends State<_VideoThumbPage> {
               style: const TextStyle(
                 color: Colors.white70,
                 fontSize: 13,
-                shadows: [
-                  Shadow(color: Colors.black, blurRadius: 4)
-                ],
+                shadows: [Shadow(color: Colors.black, blurRadius: 4)],
               ),
               textAlign: TextAlign.center,
               maxLines: 2,
@@ -520,8 +519,7 @@ class _ZoomablePhotoState extends State<_ZoomablePhoto> {
     }
     if (_bytes == null) {
       return const Center(
-          child: Icon(Icons.broken_image,
-              color: Colors.white24, size: 64));
+          child: Icon(Icons.broken_image, color: Colors.white24, size: 64));
     }
 
     return LayoutBuilder(

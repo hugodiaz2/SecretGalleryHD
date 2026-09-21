@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import '../services/media_transfer_service.dart';
@@ -17,7 +18,7 @@ class DBHelper implements TransferRepository {
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), dbFileName);
     return await openDatabase(path,
-        version: 3, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 4, onCreate: _onCreate, onUpgrade: _onUpgrade);
   }
 
   /// Cierra la conexión activa y limpia la instancia en caché. Se usa al
@@ -29,6 +30,9 @@ class DBHelper implements TransferRepository {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 4) {
+      await db.execute('ALTER TABLE trash ADD COLUMN folder_payload TEXT');
+    }
     if (oldVersion < 3) {
       await db.execute('ALTER TABLE photos ADD COLUMN source_asset_id TEXT');
       await db.execute('ALTER TABLE photos ADD COLUMN source_digest TEXT');
@@ -88,6 +92,7 @@ class DBHelper implements TransferRepository {
     encrypted_path TEXT NOT NULL,
     original_path TEXT,
     deleted_at INTEGER NOT NULL,
+    folder_payload TEXT,
     type TEXT DEFAULT 'photo'
   )
 ''');
@@ -393,6 +398,114 @@ class DBHelper implements TransferRepository {
     );
   }
 
+  Future<Map<String, dynamic>> _folderSnapshot(
+      DatabaseExecutor db, int root) async {
+    final folders = <Map<String, dynamic>>[];
+    final photos = <Map<String, dynamic>>[];
+    final pending = <int>[root];
+    final seen = <int>{};
+    while (pending.isNotEmpty) {
+      final id = pending.removeLast();
+      if (!seen.add(id)) continue;
+      final rows = await db.query('folders', where: 'id = ?', whereArgs: [id]);
+      if (rows.isEmpty) continue;
+      folders.add(rows.first);
+      photos.addAll(
+          await db.query('photos', where: 'folder_id = ?', whereArgs: [id]));
+      final children = await db.query('folders',
+          columns: ['id'], where: 'parent_id = ?', whereArgs: [id]);
+      pending.addAll(children.map((f) => f['id'] as int));
+    }
+    return {'folders': folders, 'photos': photos};
+  }
+
+  Future<List<Map<String, dynamic>>> getPhotosInFolders(
+      Iterable<int> ids) async {
+    final db = await database;
+    return db.transaction((txn) async {
+      final photos = <int, Map<String, dynamic>>{};
+      for (final id in ids) {
+        final snapshot = await _folderSnapshot(txn, id);
+        for (final photo in snapshot['photos'] as List<Map<String, dynamic>>) {
+          photos[photo['id'] as int] = photo;
+        }
+      }
+      return photos.values.toList();
+    });
+  }
+
+  Future<void> moveFolderToTrash(int folderId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final snapshot = await _folderSnapshot(txn, folderId);
+      final folders = snapshot['folders'] as List<Map<String, dynamic>>;
+      if (folders.isEmpty) return;
+      await txn.insert('trash', {
+        'original_id': folderId,
+        'folder_id': folders.first['parent_id'],
+        'original_name': folders.first['name'],
+        'encrypted_path': '',
+        'type': 'folder',
+        'deleted_at': DateTime.now().millisecondsSinceEpoch,
+        'folder_payload': jsonEncode(snapshot),
+      });
+      for (final photo in snapshot['photos'] as List<Map<String, dynamic>>) {
+        await txn.update('folders', {'cover_photo_path': null},
+            where: 'cover_photo_path = ?',
+            whereArgs: [photo['encrypted_path']]);
+      }
+      for (final folder in folders.reversed) {
+        await txn.delete('photos',
+            where: 'folder_id = ?', whereArgs: [folder['id']]);
+        await txn.delete('folders', where: 'id = ?', whereArgs: [folder['id']]);
+      }
+    });
+  }
+
+  List<String> trashPaths(Map<String, dynamic> item) {
+    if (item['type'] != 'folder') return [item['encrypted_path'] as String];
+    final snapshot =
+        jsonDecode(item['folder_payload'] as String) as Map<String, dynamic>;
+    return (snapshot['photos'] as List)
+        .map((p) => p['encrypted_path'] as String)
+        .toSet()
+        .toList();
+  }
+
+  Future<void> _restoreFolderFromTrash(int trashId) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final rows =
+          await txn.query('trash', where: 'id = ?', whereArgs: [trashId]);
+      if (rows.isEmpty) return;
+      final snapshot = jsonDecode(rows.first['folder_payload'] as String)
+          as Map<String, dynamic>;
+      final remap = <int, int>{};
+      for (final raw in snapshot['folders'] as List) {
+        final folder = Map<String, dynamic>.from(raw as Map);
+        final oldId = folder.remove('id') as int;
+        final parent = folder['parent_id'] as int?;
+        if (remap.containsKey(parent)) {
+          folder['parent_id'] = remap[parent];
+        } else if (parent != null) {
+          final existing = await txn.query('folders',
+              columns: ['id'], where: 'id = ?', whereArgs: [parent]);
+          if (existing.isEmpty) folder['parent_id'] = null;
+        }
+        final collision = await txn.query('folders',
+            columns: ['id'], where: 'id = ?', whereArgs: [oldId]);
+        if (collision.isEmpty) folder['id'] = oldId;
+        remap[oldId] = await txn.insert('folders', folder);
+      }
+      for (final raw in snapshot['photos'] as List) {
+        final photo = Map<String, dynamic>.from(raw as Map)..remove('id');
+        photo['folder_id'] = remap[photo['folder_id']]!;
+        await txn.insert('photos', photo);
+      }
+      await txn.delete('trash', where: 'id = ?', whereArgs: [trashId]);
+    });
+  }
+
   Future<int> moveToTrash(Map<String, dynamic> photo) async {
     final db = await database;
     final now = DateTime.now().millisecondsSinceEpoch;
@@ -438,6 +551,10 @@ class DBHelper implements TransferRepository {
   }
 
   Future<void> restoreFromTrash(Map<String, dynamic> item) async {
+    if (item['type'] == 'folder') {
+      await _restoreFolderFromTrash(item['id'] as int);
+      return;
+    }
     final db = await database;
     // Verificar si la carpeta destino aún existe
     int folderId = item['folder_id'] as int? ?? 0;

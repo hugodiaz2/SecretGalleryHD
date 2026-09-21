@@ -419,3 +419,53 @@ El nuevo canal Android requiere reconstruir e instalar la aplicación; hot reloa
 - Se carga la jerarquía una vez y se indexa en memoria; se eliminaron las consultas de conteo por tarjeta. Incluye carga, error con reintento, estados vacíos, ajuste al teclado y colores del tema.
 - El selector compartido actualiza los flujos de mover fotos, videos y carpetas. No cambia las operaciones de cifrado ni transferencia.
 - Análisis Dart del archivo sin incidencias. Pendiente comprobación visual en dispositivo; no se generó otro APK.
+## 23. ACT-011 — Portadas en la cuadrícula de destinos (2026-09-20)
+
+- Las tarjetas de FolderTreeSheet muestran la portada de cada carpeta usando la misma resolución de portada de la galería: portada manual, archivo directo más reciente o portada de una subcarpeta.
+- Si no existe portada, está cargando o no puede leerse, se conserva el icono de carpeta. Las portadas de video usan miniaturas.
+- Reutiliza la caché compartida de miniaturas, limita la decodificación a 384 px y pospone el trabajo durante desplazamientos rápidos. Memoriza las consultas de portada durante la vida del panel y descarta cargas pendientes de celdas desmontadas.
+- No modifica navegación, búsqueda ni confirmación de destino. Análisis Dart del selector sin incidencias; pendiente revisión visual en teléfono.
+## 24. ACT-012 — Barra de acciones del visor sobre la navegación (2026-09-20)
+
+- El visor de fotos abre en edgeToEdge con los controles visibles; usa immersiveSticky únicamente cuando el usuario oculta las barras al tocar la imagen. Al mostrarlas, restaura edgeToEdge.
+- Compartir/Mover/Desbloquear/Eliminar/Información pasan del Stack superpuesto al bottomNavigationBar del Scaffold, reservando espacio fuera de la foto y conservando SafeArea junto con la protección global.
+- Los cinco botones distribuyen el ancho disponible con Expanded y etiquetas de hasta dos líneas para teléfonos estrechos.
+- El visor de video también abre con navegación visible y restaura las barras al salir del modo de pantalla completa de Chewie.
+- No se modifican las operaciones de compartir, mover, desbloquear o eliminar. Pendiente comprobación visual en teléfono con navegación por botones y gestos.
+## 25. ACT-013 — Mover fotos y subcarpetas a Inicio (2026-09-20)
+
+- El nivel raíz de FolderTreeSheet ahora es un destino confirmable llamado Inicio, con el botón Mover a Inicio cuando el elemento viene de una carpeta. No es necesario abrir una carpeta para confirmar.
+- Devuelve un mapa de destino explícito con id 0 e is_root true; cancelar sigue devolviendo null. Las fotos/videos usan folder_id 0, que ya consulta getMainPhotos; no requiere migrar la base de datos.
+- Los llamadores de movimiento de carpetas traducen is_root a parent_id null, conservando el esquema de carpetas raíz. Se impide confirmar el destino actual y se mantienen las exclusiones de descendientes.
+- Flujo: desde HUGO/misael, seleccionar una foto, Mover, Mover a Inicio. Si se navega dentro del selector, Regresar permite volver a Inicio.
+- Análisis Dart del selector sin incidencias y diff sin errores de espacio. Pendiente comprobación funcional en teléfono.
+## 26. ACT-014 — Desbloquear carpetas completas y papelera de carpetas (2026-09-20)
+
+- Nuevo Desbloquear todo en el menú de cada carpeta y en selección múltiple, tanto en Inicio como en subcarpetas. Reúne fotos y videos de todos los niveles, sin duplicar archivos si se seleccionan destinos superpuestos; usa confirmUnlock y la transferencia verificada existente. Las carpetas quedan vacías; los archivos que fallen permanecen privados. No se añaden avisos de éxito.
+- Eliminar una carpeta ahora la envía siempre a papelera con sus subcarpetas y archivos, conservando los originales cifrados. Esta acción sigue la petición explícita del usuario incluso si el ajuste Sin papelera está activo para archivos individuales.
+- Esquema SQLite versión 4: columna nullable trash.folder_payload. Una entrada type=folder conserva un JSON de los registros de carpetas y fotos, incluidos metadatos de transferencia, fechas y portadas. El archivado y la retirada del árbol activo se realizan en una transacción; no se eliminan archivos del disco.
+- La papelera distingue carpetas por icono y nombre, permite restaurarlas completas y borrarlas definitivamente. Restauración transaccional, padres antes que hijos, remapeo de IDs si hay colisión y retorno a Inicio si el padre original ya no existe. El borrado definitivo recorre los archivos del paquete; si falla conserva la entrada para reintentar.
+- Se adapta también Vaciar papelera y la selección múltiple a paquetes de carpetas, incluidas carpetas vacías. Se conserva compatibilidad con entradas antiguas de fotos/videos.
+- Archivos: db_helper.dart, media_service.dart, unlock_helper.dart, albums_screen.dart, folder_detail_screen.dart y trash_screen.dart.
+- Pendiente verificación funcional en Android: carpeta con varios niveles, carpeta vacía, restauración con padre ausente y desbloqueo parcial. No se ha generado otro APK.
+- Validación ACT-014: análisis Dart de los seis archivos sin errores; quedan advertencias previas de código sin uso y APIs obsoletas. No equivale a una prueba de restauración en dispositivo.
+
+## 27. ACT-015 — Acerca de y explicación de privacidad (2026-09-20)
+
+- Configuración incluye Información > Acerca de, con pantalla desplazable adaptada al tema y al área segura global.
+- Explica almacenamiento local, cifrado de fotos/videos, verificación antes de eliminar originales, acceso, protección de capturas, camuflaje, papelera, compartir/desbloquear y respaldos.
+- El texto describe la implementación actual sin prometer privacidad absoluta ni cifrado de todos los metadatos. Aclara que otras copias externas no se eliminan al ocultar, que compartir/desbloquear entrega contenido fuera de la bóveda y que la seguridad también depende del dispositivo.
+- Archivos: about_screen.dart y settings_screen.dart. Análisis Dart sin errores; observaciones previas de APIs obsoletas en Configuración. Pendiente revisión visual en teléfono.
+## 28. ACT-016 — Conservar carpetas al desbloquear (2026-09-20)
+
+- Se comprobó que Desbloquear todo ya retira únicamente los archivos exportados y no elimina registros de carpetas.
+- La confirmación de desbloqueo de carpetas ahora lo explica explícitamente: conserva carpeta y subcarpetas, y cualquier archivo cuyo desbloqueo falle permanece en su ubicación privada.
+- Se elige la opción solicitada de conservar siempre la estructura. No se añade eliminación automática de carpetas al desbloquear; Enviar a papelera sigue siendo una acción independiente.
+- Archivo: unlock_helper.dart. No cambia el motor de transferencia ni se añaden mensajes de éxito.
+## 29. ACT-017 — Portadas de carpetas más visibles (2026-09-20)
+
+- FolderThumbnail ahora usa la portada a todo el tamaño de la tarjeta, sin oscurecimiento general ni icono superpuesto cuando la imagen está disponible. Conserva un icono de carpeta como alternativa sin portada o si falla la imagen.
+- Nombre y menú sobre una franja negra al 40 % de opacidad, dejando ver la imagen detrás. Se elimina la franja opaca que antes ocupaba espacio separado.
+- Se sustituye el triángulo azul del contador por una etiqueta negra translúcida y redondeada con icono de imágenes y cantidad. La selección conserva borde y marca con el color del tema.
+- Se oculta el número de subcarpetas tanto en la cuadrícula como en las filas de lista de Inicio y carpetas. No se modifica la jerarquía ni la navegación.
+- Se conserva la carga diferida y la caché existente. Análisis Dart de FolderThumbnail sin incidencias; pendiente revisión visual en teléfono.
