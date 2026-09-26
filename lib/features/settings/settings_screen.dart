@@ -62,13 +62,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
     for (final p in allPhotos) {
       final name = (p['original_name'] ?? '') as String;
       final ext = name.split('.').last.toLowerCase();
-      if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext)) {
+      if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'].contains(ext)) {
         videos++;
       } else {
         photos++;
       }
     }
 
+    if (!mounted) return;
     setState(() {
       _closeOnMinimize = prefs['closeOnMinimize'] as bool;
       _intruderSelfie = prefs['intruderSelfie'] as bool;

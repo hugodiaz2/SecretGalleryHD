@@ -25,6 +25,7 @@ class MediaService {
   );
   final Map<String, Uint8List> _photoBytesCache = {};
   final _thumbnails = ThumbnailCache();
+  final _videoThumbnails = ThumbnailCache(maxConcurrent: 1);
 
   static const int _maxOriginalBytes = 32 * 1024 * 1024;
   int _originalBytes = 0;
@@ -144,10 +145,12 @@ class MediaService {
     _photoBytesCache.clear();
     _originalBytes = 0;
     _thumbnails.clear();
+    _videoThumbnails.clear();
   }
 
   // ── Obtener bytes desencriptados ─────────────────────────
   Future<Uint8List?> getPhotoBytes(String encryptedPath) async {
+    if (isVideoPath(encryptedPath)) return null;
     final key = encryptedPath;
     final cached = _photoBytesCache.remove(key);
     if (cached != null) {
@@ -217,52 +220,66 @@ class MediaService {
   }
 
   Uint8List? cachedThumbnail(String path, {required bool video}) =>
-      _thumbnails.peek('${video ? 'video' : 'photo'}:$path');
+      (video ? _videoThumbnails : _thumbnails)
+          .peek('${video ? 'video' : 'photo'}:$path');
 
   Future<Uint8List?> getPhotoThumbnail(String encryptedPath,
           {bool Function()? isNeeded}) =>
-      _thumbnails.load('photo:$encryptedPath', () async {
-        final bytes = await _crypto.decryptFile(encryptedPath);
-        final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
-        ui.ImageDescriptor? descriptor;
-        ui.Codec? codec;
-        ui.Image? image;
-        try {
-          descriptor = await ui.ImageDescriptor.encoded(buffer);
-          final largest = descriptor.width > descriptor.height
-              ? descriptor.width
-              : descriptor.height;
-          final scale = largest > 384 ? 384 / largest : 1.0;
-          codec = await descriptor.instantiateCodec(
-            targetWidth: (descriptor.width * scale).round().clamp(1, 384),
-            targetHeight: (descriptor.height * scale).round().clamp(1, 384),
-          );
-          image = (await codec.getNextFrame()).image;
-          final data = await image.toByteData(format: ui.ImageByteFormat.png);
-          return data?.buffer
-              .asUint8List(data.offsetInBytes, data.lengthInBytes);
-        } finally {
-          image?.dispose();
-          codec?.dispose();
-          descriptor?.dispose();
-          buffer.dispose();
-        }
-      }, isNeeded: isNeeded);
+      isVideoPath(encryptedPath)
+          ? getVideoThumbnail(encryptedPath, 'video.mp4', isNeeded: isNeeded)
+          : _thumbnails.load('photo:$encryptedPath', () async {
+              final bytes = await _crypto.decryptFile(encryptedPath);
+              final buffer = await ui.ImmutableBuffer.fromUint8List(bytes);
+              ui.ImageDescriptor? descriptor;
+              ui.Codec? codec;
+              ui.Image? image;
+              try {
+                descriptor = await ui.ImageDescriptor.encoded(buffer);
+                final largest = descriptor.width > descriptor.height
+                    ? descriptor.width
+                    : descriptor.height;
+                final scale = largest > 384 ? 384 / largest : 1.0;
+                codec = await descriptor.instantiateCodec(
+                  targetWidth: (descriptor.width * scale).round().clamp(1, 384),
+                  targetHeight:
+                      (descriptor.height * scale).round().clamp(1, 384),
+                );
+                image = (await codec.getNextFrame()).image;
+                final data =
+                    await image.toByteData(format: ui.ImageByteFormat.png);
+                return data?.buffer
+                    .asUint8List(data.offsetInBytes, data.lengthInBytes);
+              } finally {
+                image?.dispose();
+                codec?.dispose();
+                descriptor?.dispose();
+                buffer.dispose();
+              }
+            }, isNeeded: isNeeded);
+
+  /// Uses the Android streaming engine. The caller owns this private temporary.
+  Future<void> preparePrivateVideo(
+      String encryptedPath, String destination) async {
+    await _crypto.prepareExportFile(encryptedPath,
+        destinationPath: destination);
+  }
 
   Future<Uint8List?> getVideoThumbnail(
           String encryptedPath, String originalName,
           {bool Function()? isNeeded}) =>
-      _thumbnails.load('video:$encryptedPath', () async {
-        final bytes = await _crypto.decryptFile(encryptedPath);
+      _videoThumbnails.load('video:$encryptedPath', () async {
         final tempDir =
             await (await getTemporaryDirectory()).createTemp('sg_thumb_');
         try {
           final tempFile = File(p.join(tempDir.path, p.basename(originalName)));
-          await tempFile.writeAsBytes(bytes);
+          await _crypto.prepareExportFile(encryptedPath,
+              destinationPath: tempFile.path);
+          if (isNeeded != null && !isNeeded()) return null;
           return await VideoThumbnail.thumbnailData(
             video: tempFile.path,
             imageFormat: ImageFormat.JPEG,
             maxWidth: 320,
+            maxHeight: 320,
             quality: 65,
           );
         } finally {

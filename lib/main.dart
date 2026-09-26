@@ -4,6 +4,9 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'core/security/pin_service.dart';
+import 'core/security/crypto_service.dart';
+import 'core/services/media_service.dart';
+import 'core/services/backup_service.dart';
 import 'core/services/prefs_service.dart';
 import 'core/services/theme_service.dart';
 import 'core/services/security_channel.dart';
@@ -18,7 +21,11 @@ import 'features/camouflage/calculator_screen.dart';
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
-  await ThemeService.instance.load();
+  try {
+    await ThemeService.instance.load();
+  } catch (_) {
+    // Render the access error screen even when secure preferences cannot be read.
+  }
   runApp(const SecretGalleryApp());
 }
 
@@ -38,8 +45,27 @@ class SecretGalleryApp extends StatelessWidget {
         builder: (context, child) => ColoredBox(
           color: Theme.of(context).scaffoldBackgroundColor,
           child: SafeArea(
-            top: false, // AppBars and screen-level SafeAreas handle the status bar.
-            child: child ?? const SizedBox.shrink(),
+            top:
+                false, // AppBars and screen-level SafeAreas handle the status bar.
+            child: ValueListenableBuilder<bool>(
+              valueListenable: BackupService.busy,
+              builder: (context, busy, _) => Stack(children: [
+                child ?? const SizedBox.shrink(),
+                if (busy)
+                  const Positioned.fill(
+                      child: Material(
+                    color: Color(0xFF121212),
+                    child: Center(
+                        child:
+                            Column(mainAxisSize: MainAxisSize.min, children: [
+                      CircularProgressIndicator(),
+                      SizedBox(height: 16),
+                      Text('Procesando respaldo...',
+                          style: TextStyle(color: Colors.white)),
+                    ])),
+                  )),
+              ]),
+            ),
           ),
         ),
         home: const AppEntry(),
@@ -58,6 +84,7 @@ class AppEntry extends StatefulWidget {
 class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   final _pinService = PinService();
   bool _loading = true;
+  bool _startupFailed = false;
   bool _hasPin = false;
   bool _camouflageMode = false;
   bool _unlocked = false;
@@ -81,32 +108,32 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   // ── Cerrar al minimizar / re-bloqueo al volver ───────────
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) async {
-    super.didChangeAppLifecycleState(state);
-    if (state == AppLifecycleState.paused) {
-      if (LifecycleGuard.isSuppressed) {
-        // La propia app abrió algo externo a propósito (compartir,
-        // elegir un archivo de respaldo, etc.): no es el usuario saliendo.
-        return;
-      }
-
-      final closeOnMinimize =
-          await PrefsService.instance.getCloseOnMinimize();
-      if (closeOnMinimize) {
-        // SystemNavigator.pop() no siempre mata el proceso de forma
-        // confiable una vez la app ya está en segundo plano; exit(0) sí
-        // lo garantiza.
-        exit(0);
-      }
-
-      // Se pide el método de acceso de nuevo siempre que la app vuelva
-      // del segundo plano, sin importar el switch de arriba: minimizar
-      // (o mandar la app a compartir, etc.) no debe dejar la sesión
-      // abierta para quien retome el teléfono después.
-      if (_unlocked) setState(() => _unlocked = false);
+    if (state != AppLifecycleState.paused ||
+        LifecycleGuard.isSuppressed ||
+        !mounted) return;
+    // Close every private route immediately, before any asynchronous preference read.
+    if (_unlocked || _choosingMethod) {
+      setState(() {
+        _unlocked = false;
+        _choosingMethod = false;
+      });
+      Navigator.of(context).popUntil((route) => route.isFirst);
+      MediaService.instance.clearThumbnailCaches();
+    }
+    try {
+      final method = await PrefsService.instance.getAuthMethod();
+      final camouflage = await PrefsService.instance.getCamouflageMode();
+      if (mounted)
+        setState(() {
+          _authMethod = method;
+          _camouflageMode = camouflage;
+        });
+      if (await PrefsService.instance.getCloseOnMinimize()) exit(0);
+    } catch (_) {
+      // Failure to read an optional preference must never bypass the lock.
     }
   }
 
-  // ── Aplicar settings al iniciar ──────────────────────────
   Future<void> _applySettings() async {
     try {
       // Evitar capturas — FLAG_SECURE nativo (bloquea screenshots/grabación)
@@ -119,8 +146,7 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
       if (keepOn) await WakelockPlus.enable();
 
       // Maximizar brillo
-      final maxBrightness =
-          await PrefsService.instance.getMaxBrightness();
+      final maxBrightness = await PrefsService.instance.getMaxBrightness();
       if (maxBrightness) {
         await ScreenBrightness().setScreenBrightness(1.0);
       }
@@ -130,31 +156,32 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   }
 
   Future<void> _check() async {
-    // Sin try/catch acá, una excepción al leer el almacenamiento seguro
-    // (p. ej. clave de Keystore invalidada) dejaba _loading en true para
-    // siempre: la app parecía cargar sin fin. Si algo falla, se asume
-    // "sin PIN todavía" y se manda a configuración inicial.
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _startupFailed = false;
+    });
     try {
+      await BackupService.instance.recoverInterruptedRestore();
       final has = await _pinService.hasPin();
-      final camouflage =
-          has && await PrefsService.instance.getCamouflageMode();
+      if (!has && await CryptoService.hasProtectedFiles()) {
+        throw StateError('Missing access credentials for an existing vault');
+      }
+      final camouflage = has && await PrefsService.instance.getCamouflageMode();
       final authMethod = await PrefsService.instance.getAuthMethod();
+      if (!mounted) return;
       setState(() {
         _hasPin = has;
         _camouflageMode = camouflage;
         _authMethod = authMethod;
         _loading = false;
       });
-    } catch (e) {
-      debugPrint('Error verificando estado de acceso: $e');
-      if (mounted) {
+    } catch (_) {
+      if (mounted)
         setState(() {
-          _hasPin = false;
-          _camouflageMode = false;
-          _authMethod = AuthMethod.pin;
+          _startupFailed = true;
           _loading = false;
         });
-      }
     }
   }
 
@@ -163,8 +190,17 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   // el listener de "agitar para cerrar" y el observer de "cerrar al
   // minimizar" — quedaban vivos solo mientras se veía la pantalla de
   // bloqueo. Con setState, AppEntry sigue montado toda la sesión.
-  void _goToGallery() {
-    if (mounted) setState(() => _unlocked = true);
+  Future<void> _goToGallery() async {
+    if (BackupService.busy.value) return;
+    final method = await PrefsService.instance.getAuthMethod();
+    if (!mounted ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.paused)
+      return;
+    setState(() {
+      _authMethod = method;
+      _choosingMethod = false;
+      _unlocked = true;
+    });
   }
 
   @override
@@ -178,8 +214,25 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
       );
     }
 
+    if (_startupFailed) {
+      return Scaffold(
+          body: SafeArea(
+              child: Center(
+                  child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.lock_outline, size: 40),
+          const SizedBox(height: 16),
+          const Text(
+              'No se pudo leer el acceso seguro. Tus archivos no se han borrado. No desinstales la app ni borres sus datos.',
+              textAlign: TextAlign.center),
+          const SizedBox(height: 16),
+          FilledButton(onPressed: _check, child: const Text('Reintentar')),
+        ]),
+      ))));
+    }
     final Widget child;
-    if (_unlocked) {
+    if (_unlocked || _choosingMethod) {
       child = const AlbumsScreen();
     } else if (_camouflageMode) {
       child = CalculatorScreen(onUnlocked: _goToGallery);
@@ -202,15 +255,14 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
       child = switch (_authMethod) {
         AuthMethod.password =>
           PasswordScreen(mode: PasswordMode.unlock, onSuccess: _goToGallery),
-        AuthMethod.fingerprint =>
-          FingerprintScreen(onSuccess: _goToGallery),
+        AuthMethod.fingerprint => FingerprintScreen(onSuccess: _goToGallery),
         AuthMethod.pin =>
           PinScreen(mode: PinMode.unlock, onSuccess: _goToGallery),
       };
     }
 
     return AnimatedSwitcher(
-      duration: const Duration(milliseconds: 350),
+      duration: _unlocked ? const Duration(milliseconds: 350) : Duration.zero,
       child: KeyedSubtree(
         key: ValueKey(_unlocked ? 'gallery' : 'lock'),
         child: child,

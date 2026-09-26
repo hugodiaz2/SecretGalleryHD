@@ -3,6 +3,8 @@ import 'dart:typed_data';
 
 /// Small previews only: never retains the full decrypted originals.
 class ThumbnailCache {
+  ThumbnailCache({this.maxConcurrent = 2}) : assert(maxConcurrent > 0);
+  final int maxConcurrent;
   static const maxBytes = 24 * 1024 * 1024;
   final Map<String, Uint8List> _cache = {};
   final Map<String, _ThumbnailJob> _jobs = {};
@@ -49,7 +51,7 @@ class ThumbnailCache {
   }
 
   void _drain() {
-    while (_active < 2 && _pending.isNotEmpty) {
+    while (_active < maxConcurrent && _pending.isNotEmpty) {
       // Recently requested cells belong to the user's current scroll position.
       final job = _pending.removeLast();
       if (!job.consumers.any((needed) => needed())) {
@@ -73,6 +75,8 @@ class ThumbnailCache {
             (_bytes + bytes.lengthInBytes > maxBytes || _cache.length >= 180)) {
           _bytes -= _cache.remove(_cache.keys.first)!.lengthInBytes;
         }
+        final previous = _cache.remove(job.key);
+        if (previous != null) _bytes -= previous.lengthInBytes;
         _cache[job.key] = bytes;
         _bytes += bytes.lengthInBytes;
       }

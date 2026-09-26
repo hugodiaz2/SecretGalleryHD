@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -192,14 +193,23 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
 
   // ── Compartir ─────────────────────────────────────────────
   Future<void> _sharePhoto(Map<String, dynamic> photo) async {
-    final bytes =
-        await MediaService.instance.getPhotoBytes(photo['encrypted_path']);
-    if (bytes == null || !mounted) return;
-    final tempDir = await getTemporaryDirectory();
-    final name = (photo['original_name'] as String?) ?? 'archivo';
-    final tempFile = File('${tempDir.path}/$name');
-    await tempFile.writeAsBytes(bytes);
-    await LifecycleGuard.run(() => Share.shareXFiles([XFile(tempFile.path)]));
+    final directory =
+        await (await getTemporaryDirectory()).createTemp('sg_share_');
+    try {
+      final name = p.basename(photo['original_name'] as String? ?? 'archivo');
+      final tempFile = File(p.join(directory.path, name));
+      await MediaService.instance.preparePrivateVideo(
+          photo['encrypted_path'] as String, tempFile.path);
+      if (!mounted) return;
+      await LifecycleGuard.run(() => Share.shareXFiles([XFile(tempFile.path)]));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo preparar el archivo para compartir.')));
+      }
+    } finally {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    }
   }
 
   // ── Mover a carpeta ───────────────────────────────────────

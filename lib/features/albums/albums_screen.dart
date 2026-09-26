@@ -1,3 +1,4 @@
+import '../../shared/widgets/media_drag_move.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -32,7 +33,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   List<Map<String, dynamic>> _photos = [];
   String _search = '';
   bool _showSearch = false;
-  GridViewType _viewType = GridViewType.grid3;
+  GridViewType _viewType = GridViewType.grid5;
   String _currentSort = 'newest';
   final _searchCtrl = TextEditingController();
 
@@ -94,6 +95,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         ? await _db.getMainPhotos()
         : <Map<String, dynamic>>[];
 
+    if (!mounted) return;
     setState(() {
       _folders = enriched;
       _photos = List<Map<String, dynamic>>.from(photos);
@@ -561,6 +563,48 @@ void _showDesignSheet() {
         .contains(ext);
   }
 
+  bool _movingByDrag = false;
+
+  Widget _dragPhoto(Map<String, dynamic> photo, {required Widget child}) =>
+      SelectedMediaDrag(
+        key: ValueKey('drag_${photo['id']}'),
+        enabled: !_movingByDrag && !_selectingFolders &&
+            _selectedPhotoIds.contains(photo['id']),
+        ids: _selectedPhotoIds,
+        photo: photo,
+        showPreview: _showPhotoPreview,
+        child: child,
+      );
+
+  Widget _dropFolder(Map<String, dynamic> folder, {required Widget child}) =>
+      MediaFolderDrop(
+        key: ValueKey('drop_${folder['id']}'),
+        enabled: !_movingByDrag && !_selectingFolders,
+        onDrop: (selection) => _moveDraggedPhotos(selection, folder['id'] as int),
+        child: child,
+      );
+
+  Future<void> _moveDraggedPhotos(MediaDragSelection selection, int folderId) async {
+    if (_movingByDrag || !mounted) return;
+    setState(() => _movingByDrag = true);
+    try {
+      await _db.movePhotos(selection.ids, folderId);
+      if (!mounted) return;
+      setState(() {
+        _selectedPhotoIds.removeAll(selection.ids);
+        _selectingPhotos = _selectedPhotoIds.isNotEmpty;
+      });
+      await _load();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudieron mover los archivos. Intenta de nuevo.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _movingByDrag = false);
+    }
+  }
   Widget _buildGridView() {
     final spacing = _narrowBorders ? 1.0 : 2.0;
     final padding = _narrowBorders ? 1.0 : 2.0;
@@ -578,7 +622,7 @@ void _showDesignSheet() {
         if (i < _folders.length) {
           final folder = _folders[i];
           final id = folder['id'] as int;
-          return FolderThumbnail(
+          return _dropFolder(folder, child: FolderThumbnail(
             key: ValueKey('folder_$id'),
             folder: folder,
             isSelected: _selectedFolderIds.contains(id),
@@ -603,13 +647,13 @@ void _showDesignSheet() {
               });
             },
             onMenuTap: (offset) => _showFolderMenu(folder, offset),
-          );
+          ));
         }
 
         final photo = _photos[i - _folders.length];
         final photoId = photo['id'] as int;
 
-        return PhotoThumbnail(
+        return _dragPhoto(photo, child: PhotoThumbnail(
           key: ValueKey(photo['encrypted_path']),
           photo: photo,
           isSelected: _selectedPhotoIds.contains(photoId),
@@ -645,13 +689,13 @@ void _showDesignSheet() {
               }
             }
           },
-          onLongPress: () {
+          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
             setState(() {
               _selectingPhotos = true;
               _selectedPhotoIds.add(photoId);
             });
           },
-        );
+        ));
       },
     );
   }
@@ -674,7 +718,7 @@ void _showDesignSheet() {
           final count = (folder['total_count'] as int?) ?? 0;
           final subs = (folder['sub_count'] as int?) ?? 0;
 
-          return ListTile(
+          return _dropFolder(folder, child: ListTile(
             tileColor: isSelected
                 ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
                 : Colors.transparent,
@@ -739,14 +783,14 @@ void _showDesignSheet() {
               child: Icon(Icons.more_vert,
                   color: context.colors.textMuted, size: 20),
             ),
-          );
+          ));
         }
 
         final photo = item['data'] as Map<String, dynamic>;
         final photoId = photo['id'] as int;
         final isSelected = _selectedPhotoIds.contains(photoId);
 
-        return ListTile(
+        return _dragPhoto(photo, child: ListTile(
           tileColor: isSelected
               ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
               : Colors.transparent,
@@ -781,7 +825,7 @@ void _showDesignSheet() {
               }
             }
           },
-          onLongPress: () {
+          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
             setState(() {
               _selectingPhotos = true;
               _selectedPhotoIds.add(photoId);
@@ -814,7 +858,7 @@ void _showDesignSheet() {
             style:
                 GoogleFonts.poppins(color: context.colors.textMuted, fontSize: 11),
           ),
-        );
+        ));
       },
     );
   }
@@ -1204,7 +1248,7 @@ class _ListPhotoThumbState extends State<_ListPhotoThumb> {
   void initState() {
     super.initState();
     MediaService.instance
-        .getPhotoBytes(widget.photo['encrypted_path'])
+        .getPhotoThumbnail(widget.photo['encrypted_path'])
         .then((b) {
       if (mounted) setState(() => _bytes = b);
     });

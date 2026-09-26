@@ -18,7 +18,7 @@ class _TrashScreenState extends State<TrashScreen> {
   List<Map<String, dynamic>> _items = [];
   final Set<int> _selectedIds = {};
   bool _selecting = false;
-  GridViewType _viewType = GridViewType.grid3;
+  GridViewType _viewType = GridViewType.grid5;
 
   @override
   void initState() {

@@ -37,8 +37,7 @@ class _BackupScreenState extends State<BackupScreen> {
       );
       if (!mounted) return;
       setState(() => _busy = false);
-      await LifecycleGuard.run(() => Share.shareXFiles(
-          [XFile(file.path)],
+      await LifecycleGuard.run(() => Share.shareXFiles([XFile(file.path)],
           text: 'Respaldo de Secret Gallery HD'));
     } catch (e) {
       if (!mounted) return;
@@ -103,7 +102,8 @@ class _BackupScreenState extends State<BackupScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy = false);
-      _showError('No se pudo restaurar: ${e.toString().replaceFirst('Exception: ', '')}');
+      _showError(
+          'No se pudo restaurar: ${e.toString().replaceFirst('Exception: ', '')}');
     }
   }
 
@@ -143,7 +143,9 @@ class _BackupScreenState extends State<BackupScreen> {
         builder: (ctx, setDialogState) => AlertDialog(
           backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
           title: Text(
-              confirm ? 'Crea una contraseña de respaldo' : 'Contraseña del respaldo',
+              confirm
+                  ? 'Crea una contraseña de respaldo'
+                  : 'Contraseña del respaldo',
               style: GoogleFonts.poppins(color: context.colors.textPrimary)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -177,8 +179,8 @@ class _BackupScreenState extends State<BackupScreen> {
                   ),
                   focusedBorder: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(8),
-                    borderSide:
-                        BorderSide(color: Theme.of(context).colorScheme.primary),
+                    borderSide: BorderSide(
+                        color: Theme.of(context).colorScheme.primary),
                   ),
                 ),
               ),
@@ -226,7 +228,8 @@ class _BackupScreenState extends State<BackupScreen> {
                 Navigator.pop(ctx, ctrl.text);
               },
               child: Text('Continuar',
-                  style: GoogleFonts.poppins(color: context.colors.textPrimary)),
+                  style:
+                      GoogleFonts.poppins(color: context.colors.textPrimary)),
             ),
           ],
         ),
@@ -253,26 +256,28 @@ class _BackupScreenState extends State<BackupScreen> {
   @override
   Widget build(BuildContext context) {
     if (_busy) {
-      return Scaffold(
-        backgroundColor: context.colors.bg,
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 32),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(
-                    color: Theme.of(context).colorScheme.primary),
-                const SizedBox(height: 20),
-                Text(_status,
-                    textAlign: TextAlign.center,
-                    style: GoogleFonts.poppins(
-                        color: context.colors.textSecondary, fontSize: 13)),
-              ],
+      return PopScope(
+          canPop: false,
+          child: Scaffold(
+            backgroundColor: context.colors.bg,
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 32),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    CircularProgressIndicator(
+                        color: Theme.of(context).colorScheme.primary),
+                    const SizedBox(height: 20),
+                    Text(_status,
+                        textAlign: TextAlign.center,
+                        style: GoogleFonts.poppins(
+                            color: context.colors.textSecondary, fontSize: 13)),
+                  ],
+                ),
+              ),
             ),
-          ),
-        ),
-      );
+          ));
     }
 
     return Scaffold(
@@ -299,7 +304,8 @@ class _BackupScreenState extends State<BackupScreen> {
               color: Theme.of(context).colorScheme.primary.withOpacity(0.1),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                  color: Theme.of(context).colorScheme.primary.withOpacity(0.3)),
+                  color:
+                      Theme.of(context).colorScheme.primary.withOpacity(0.3)),
             ),
             child: Row(
               children: [
@@ -365,7 +371,8 @@ class _BackupScreenState extends State<BackupScreen> {
               fontSize: 14,
               fontWeight: FontWeight.w600)),
       subtitle: Text(subtitle,
-          style: GoogleFonts.poppins(color: context.colors.textMuted, fontSize: 11)),
+          style: GoogleFonts.poppins(
+              color: context.colors.textMuted, fontSize: 11)),
       trailing: Icon(Icons.chevron_right, color: context.colors.textMuted),
     );
   }

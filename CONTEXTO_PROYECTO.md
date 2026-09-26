@@ -469,3 +469,36 @@ El nuevo canal Android requiere reconstruir e instalar la aplicación; hot reloa
 - Se sustituye el triángulo azul del contador por una etiqueta negra translúcida y redondeada con icono de imágenes y cantidad. La selección conserva borde y marca con el color del tema.
 - Se oculta el número de subcarpetas tanto en la cuadrícula como en las filas de lista de Inicio y carpetas. No se modifica la jerarquía ni la navegación.
 - Se conserva la carga diferida y la caché existente. Análisis Dart de FolderThumbnail sin incidencias; pendiente revisión visual en teléfono.
+## 30. ACT-018 — Cierre al ocultar videos grandes (2026-09-21)
+
+- Causa probable identificada por revisión: getVideoThumbnail descifraba el video completo mediante decryptBytes (varias copias entre Java/canal/Dart) y podían ejecutarse dos lecturas simultáneas. Al reabrir la galería se repetía el trabajo. No se obtuvo logcat del teléfono para confirmar OOM.
+- Miniaturas de video ahora descifran por bloques a un temporal privado mediante prepareExportFile y ejecutan una sola extracción de video a la vez, con dimensiones acotadas. La cola de fotos mantiene su límite independiente.
+- Reproducción y compartir usan temporales privados exclusivos con descifrado por bloques; no transportan videos completos por MethodChannel. Se limpian al terminar. Las filas de listas usan miniaturas y getPhotoThumbnail deriva los videos a su ruta correcta. getPhotoBytes rechaza videos para impedir lecturas completas accidentales.
+- El método nativo de bytes en memoria rechaza archivos cifrados con carga superior a 32 MiB y convierte OutOfMemoryError del trabajador en error del canal. Archivos grandes se pueden transferir por bloques; una foto superior a ese límite puede carecer de previsualización. No es una garantía frente a toda falta de memoria o fallo de codec.
+- No se borran registros ni archivos de la bóveda para esta reparación. Actualizar sin desinstalar/borrar datos. Pendiente confirmar modelo, tamaños y etapa del cierre con el usuario.
+- Análisis de servicios y reproductor sin incidencias; nueve vectores de compatibilidad Java/Dart correctos. Se prepara una APK release de reparación; validación funcional con los videos del usuario pendiente.
+## 31. ACT-019 — Auditoría y correcciones preventivas (2026-09-21)
+
+- Informe con hallazgos, cambios, evidencia y pendientes en REVISION_FALLOS.md.
+- Bloqueo elimina rutas privadas antes de esperar preferencias; inicio falla cerrado si no puede leer acceso; se impide regenerar claves sobre archivos existentes y se desactiva resetOnError en almacenamiento seguro. Se corrige cierre del onboarding y actualización del método de acceso.
+- Papelera de fotos transaccional e idempotente ante dobles restauraciones. Esquema actual 5 (archivo secret_gallery_v3.db sin renombrar), añade photo_payload para conservar metadatos completos. Compatible con entradas anteriores.
+- Respaldos: exportación a disco en worker, extracción previa en staging, rechazo de rutas/duplicados, validación SQLite/archivos referenciados, remapeo de rutas, copia de rollback y registro protegido sg_restore_rollback. AppEntry intenta recuperar una restauración interrumpida antes de cargar acceso. Interacción bloqueada mientras se procesa un respaldo. VaultActivity impide solapar respaldos con transferencias activas o en cola.
+- Se liberan controladores tras fallar la inicialización de video. Se conserva el contenido privado existente.
+- 27 pruebas sintéticas aprobadas (audit_regression_test, missing_key_test y pruebas anteriores de transferencia/cifrado). Análisis de archivos principales sin errores; quedan observaciones de estilo.
+- SG-002/003/004/006/008 tienen correcciones implementadas, con aceptación Android aún pendiente. SG-007 sigue abierto: metadatos de respaldo legibles y falta de autenticación integral del formato.
+- No considerar la app certificada ni libre de fallos. Revisar los escenarios pendientes del informe antes de publicar.
+## 32. ACT-020 — Contador de archivos protegidos (2026-09-21)
+
+- Configuración contaba solo Home porque getAllPhotos filtraba folder_id = 0. Ahora consulta todos los registros activos de photos, incluyendo cualquier nivel de carpetas. Papelera mantiene su contador independiente.
+- getMainPhotos conserva el filtro de Home; no cambia la ubicación ni la visualización de archivos en la galería.
+- El conteo de videos incluye FLV, igual que el servicio de medios. Se comprueba mounted antes de actualizar las estadísticas tras la carga asíncrona.
+## 33. ACT-021 — Arrastrar selección a carpetas (2026-09-21)
+
+- En Home y dentro de carpetas, en cuadrícula y lista: seleccionar archivos, mantener pulsado uno seleccionado y arrastrarlo sobre una carpeta visible. El grupo muestra miniatura animada y cantidad; el destino se resalta con «Soltar aquí». Respeta la preferencia de ocultar previsualizaciones.
+- Desplazamiento automático en los bordes y conservación del elemento arrastrado cuando sale del área visible. Soltar fuera cancela sin modificar archivos. No abre carpetas automáticamente durante el arrastre; para otros destinos sigue disponible el menú Mover.
+- movePhotos usa una transacción, valida destino y registros y elimina IDs duplicados. El gesto conserva la selección si falla y la limpia al completar; no descifra ni copia medios para moverlos.
+- Componentes compartidos en lib/shared/widgets/media_drag_move.dart. Pruebas de interacción en test/media_drag_move_test.dart; pendiente valoración visual y táctil en teléfono. Requiere nueva compilación para incluirlo en una APK.
+## 34. ACT-022 — Vista predeterminada 5×5 (2026-09-21)
+
+- getGridType usa grid5 cuando no existe una preferencia guardada. Home, carpetas y papelera también empiezan con grid5 mientras cargan preferencias.
+- Se mantienen las opciones de diseño y se respeta cualquier vista elegida y guardada anteriormente. No requiere migración de datos. Pendiente incluir en la próxima APK.

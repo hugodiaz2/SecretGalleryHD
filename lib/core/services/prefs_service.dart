@@ -10,7 +10,7 @@ class PrefsService {
   PrefsService._();
 
   final _storage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(resetOnError: true),
+    aOptions: AndroidOptions(resetOnError: false),
   );
 
   // Keys
@@ -36,7 +36,7 @@ class PrefsService {
     final val = await _storage.read(key: _keyGrid);
     return GridViewType.values.firstWhere(
       (e) => e.name == val,
-      orElse: () => GridViewType.grid3,
+      orElse: () => GridViewType.grid5,
     );
   }
 

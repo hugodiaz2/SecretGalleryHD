@@ -119,7 +119,7 @@ public final class VaultCrypto {
     /** In-memory preview input; no unencrypted temporary file is created. */
     public static byte[] decryptBytes(File source, byte[] key) throws Exception {
         long size = source.length();
-        if (size < 32 || (size - 16) % 16 != 0 || size - 16 > Integer.MAX_VALUE) {
+        if (size < 32 || (size - 16) % 16 != 0 || size - 16 > 32L * 1024 * 1024) {
             throw new IOException("Invalid encrypted length");
         }
         try (DataInputStream input = new DataInputStream(new FileInputStream(source));

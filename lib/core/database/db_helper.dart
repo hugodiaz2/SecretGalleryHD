@@ -18,7 +18,7 @@ class DBHelper implements TransferRepository {
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), dbFileName);
     return await openDatabase(path,
-        version: 4, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 5, onCreate: _onCreate, onUpgrade: _onUpgrade);
   }
 
   /// Cierra la conexión activa y limpia la instancia en caché. Se usa al
@@ -30,6 +30,9 @@ class DBHelper implements TransferRepository {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 5) {
+      await db.execute('ALTER TABLE trash ADD COLUMN photo_payload TEXT');
+    }
     if (oldVersion < 4) {
       await db.execute('ALTER TABLE trash ADD COLUMN folder_payload TEXT');
     }
@@ -93,6 +96,7 @@ class DBHelper implements TransferRepository {
     original_path TEXT,
     deleted_at INTEGER NOT NULL,
     folder_payload TEXT,
+    photo_payload TEXT,
     type TEXT DEFAULT 'photo'
   )
 ''');
@@ -335,12 +339,21 @@ class DBHelper implements TransferRepository {
 
   Future<int> movePhotos(List<int> photoIds, int newFolderId) async {
     final db = await database;
-    int count = 0;
-    for (final id in photoIds) {
-      count += await db.update('photos', {'folder_id': newFolderId},
-          where: 'id = ?', whereArgs: [id]);
-    }
-    return count;
+    return db.transaction((txn) async {
+      if (newFolderId != 0) {
+        final folders = await txn.query('folders', columns: ['id'],
+            where: 'id = ?', whereArgs: [newFolderId], limit: 1);
+        if (folders.isEmpty) throw StateError('La carpeta de destino ya no existe.');
+      }
+      int count = 0;
+      for (final id in photoIds.toSet()) {
+        final updated = await txn.update('photos', {'folder_id': newFolderId},
+            where: 'id = ?', whereArgs: [id]);
+        if (updated != 1) throw StateError('Un archivo seleccionado ya no existe.');
+        count += updated;
+      }
+      return count;
+    });
   }
 
   Future<int> deletePhoto(int id) async {
@@ -388,14 +401,10 @@ class DBHelper implements TransferRepository {
     );
   }
 
+  /// Todos los archivos activos, incluidos los de carpetas y subcarpetas.
   Future<List<Map<String, dynamic>>> getAllPhotos() async {
     final db = await database;
-    return await db.query(
-      'photos',
-      where: 'folder_id = ?',
-      whereArgs: [0],
-      orderBy: 'date_added DESC',
-    );
+    return await db.query('photos', orderBy: 'date_added DESC');
   }
 
   Future<Map<String, dynamic>> _folderSnapshot(
@@ -508,27 +517,27 @@ class DBHelper implements TransferRepository {
 
   Future<int> moveToTrash(Map<String, dynamic> photo) async {
     final db = await database;
-    final now = DateTime.now().millisecondsSinceEpoch;
-
-    // Limpiar portada si esta foto era portada de alguna carpeta
-    await db.update(
-      'folders',
-      {'cover_photo_path': null},
-      where: 'cover_photo_path = ?',
-      whereArgs: [photo['encrypted_path']],
-    );
-
-    final id = await db.insert('trash', {
-      'original_id': photo['id'],
-      'folder_id': photo['folder_id'],
-      'original_name': photo['original_name'],
-      'encrypted_path': photo['encrypted_path'],
-      'original_path': photo['original_path'],
-      'deleted_at': now,
-      'type': _getFileType(photo['original_name'] ?? ''),
+    return db.transaction((txn) async {
+      final rows =
+          await txn.query('photos', where: 'id = ?', whereArgs: [photo['id']]);
+      if (rows.isEmpty) return 0;
+      final current = rows.first;
+      final id = await txn.insert('trash', {
+        'original_id': current['id'],
+        'folder_id': current['folder_id'],
+        'original_name': current['original_name'],
+        'encrypted_path': current['encrypted_path'],
+        'original_path': current['original_path'],
+        'deleted_at': DateTime.now().millisecondsSinceEpoch,
+        'type': _getFileType(current['original_name'] as String? ?? ''),
+        'photo_payload': jsonEncode(current),
+      });
+      await txn.update('folders', {'cover_photo_path': null},
+          where: 'cover_photo_path = ?',
+          whereArgs: [current['encrypted_path']]);
+      await txn.delete('photos', where: 'id = ?', whereArgs: [current['id']]);
+      return id;
     });
-    await db.delete('photos', where: 'id = ?', whereArgs: [photo['id']]);
-    return id;
   }
 
   String _getFileType(String name) {
@@ -556,24 +565,32 @@ class DBHelper implements TransferRepository {
       return;
     }
     final db = await database;
-    // Verificar si la carpeta destino aún existe
-    int folderId = item['folder_id'] as int? ?? 0;
-    if (folderId != 0) {
-      final folder = await db.query('folders',
-          where: 'id = ?', whereArgs: [folderId], limit: 1);
-      if (folder.isEmpty) {
-        folderId = 0; // Si la carpeta ya no existe, restaurar a principal
+    await db.transaction((txn) async {
+      final rows =
+          await txn.query('trash', where: 'id = ?', whereArgs: [item['id']]);
+      if (rows.isEmpty)
+        return; // Repeated taps must not duplicate a restored photo.
+      final current = rows.first;
+      final payload = current['photo_payload'] as String?;
+      final photo = payload == null
+          ? <String, dynamic>{
+              'folder_id': current['folder_id'] ?? 0,
+              'original_name': current['original_name'],
+              'encrypted_path': current['encrypted_path'],
+              'original_path': current['original_path'],
+              'date_added': current['deleted_at'],
+            }
+          : Map<String, dynamic>.from(jsonDecode(payload) as Map);
+      photo.remove('id');
+      final folderId = photo['folder_id'] as int;
+      if (folderId != 0) {
+        final folder = await txn.query('folders',
+            columns: ['id'], where: 'id = ?', whereArgs: [folderId]);
+        if (folder.isEmpty) photo['folder_id'] = 0;
       }
-    }
-
-    await db.insert('photos', {
-      'folder_id': folderId,
-      'original_name': item['original_name'],
-      'encrypted_path': item['encrypted_path'],
-      'original_path': item['original_path'],
-      'date_added': DateTime.now().millisecondsSinceEpoch,
+      await txn.insert('photos', photo);
+      await txn.delete('trash', where: 'id = ?', whereArgs: [current['id']]);
     });
-    await db.delete('trash', where: 'id = ?', whereArgs: [item['id']]);
   }
 
   Future<void> deleteFromTrash(int id) async {

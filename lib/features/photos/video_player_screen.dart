@@ -29,6 +29,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
   bool _loading = true;
   String? _error;
   File? _tempFile;
+  Directory? _playbackDirectory;
 
   @override
   void initState() {
@@ -42,33 +43,38 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
     _chewieController?.dispose();
     _videoController?.dispose();
-    _tempFile?.delete().catchError((_) {});
+    _cleanupPlayback();
     super.dispose();
+  }
+
+  Future<void> _cleanupPlayback() async {
+    final directory = _playbackDirectory;
+    _playbackDirectory = null;
+    _tempFile = null;
+    if (directory == null) return;
+    try {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    } catch (_) {}
   }
 
   Future<void> _initVideo() async {
     try {
-      final bytes = await MediaService.instance
-          .getPhotoBytes(widget.video['encrypted_path']);
-
-      if (bytes == null) {
-        if (mounted) {
-          setState(() {
-            _error = 'No se pudo cargar el video';
-            _loading = false;
-          });
-        }
+      final directory =
+          await (await getTemporaryDirectory()).createTemp('sg_play_');
+      _playbackDirectory = directory;
+      final fileName =
+          p.basename(widget.video['original_name'] as String? ?? 'video.mp4');
+      final tempFile = File(p.join(directory.path, fileName));
+      await MediaService.instance.preparePrivateVideo(
+          widget.video['encrypted_path'] as String, tempFile.path);
+      if (!mounted) {
+        await _cleanupPlayback();
         return;
       }
-
-      final tempDir = await getTemporaryDirectory();
-      final fileName = widget.video['original_name'] ?? 'video.mp4';
-      final tempPath = p.join(tempDir.path, 'tmp_$fileName');
-      _tempFile = File(tempPath);
-      await _tempFile!.writeAsBytes(bytes);
-
+      _tempFile = tempFile;
       _videoController = VideoPlayerController.file(_tempFile!);
       await _videoController!.initialize();
+      if (!mounted) return;
 
       _chewieController = ChewieController(
         videoPlayerController: _videoController!,
@@ -84,6 +90,11 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
       if (mounted) setState(() => _loading = false);
     } catch (e) {
+      _chewieController?.dispose();
+      _chewieController = null;
+      await _videoController?.dispose();
+      _videoController = null;
+      await _cleanupPlayback();
       if (mounted) {
         setState(() {
           _error = 'Error al reproducir: $e';

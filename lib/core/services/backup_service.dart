@@ -1,7 +1,12 @@
 import 'dart:convert';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
+import 'package:flutter/foundation.dart' show compute, ValueNotifier;
+import 'backup_validation.dart';
+import 'vault_activity.dart';
+import 'media_service.dart';
 import 'package:archive/archive_io.dart';
 import 'package:encrypt/encrypt.dart' as enc;
 import 'package:path/path.dart' as p;
@@ -23,6 +28,73 @@ import 'prefs_service.dart';
 class BackupService {
   static final BackupService instance = BackupService._();
   BackupService._();
+  static final busy = ValueNotifier<bool>(false);
+
+  Future<T> _exclusive<T>(Future<T> Function() action) async {
+    if (busy.value || VaultActivity.transfers > 0) {
+      throw StateError(
+          'Espera a que termine la operación de archivos en curso.');
+    }
+    VaultActivity.backup = true;
+    busy.value = true;
+    try {
+      return await action();
+    } finally {
+      VaultActivity.backup = false;
+      busy.value = false;
+    }
+  }
+
+  Future<File> exportBackup(
+          {required String password, void Function(String)? onProgress}) =>
+      _exclusive(
+          () => _exportBackup(password: password, onProgress: onProgress));
+
+  Future<void> restoreBackup(
+          {required File backupFile,
+          required String password,
+          void Function(String)? onProgress}) =>
+      _exclusive(() => _restoreBackup(
+          backupFile: backupFile, password: password, onProgress: onProgress));
+
+  static const _restoreJournalKey = 'sg_restore_rollback';
+  static const _journalStorage = FlutterSecureStorage();
+
+  Future<void> recoverInterruptedRestore() async {
+    final encoded = await _journalStorage.read(key: _restoreJournalKey);
+    if (encoded == null) return;
+    final journal = jsonDecode(encoded) as Map<String, dynamic>;
+    final documents = await getApplicationDocumentsDirectory();
+    final stage = Directory(journal['stage'] as String);
+    if (!p.isWithin(documents.path, stage.path) ||
+        !p.basename(stage.path).startsWith('sg_restore_') ||
+        !await stage.exists()) {
+      throw StateError('No se puede localizar la copia de recuperación');
+    }
+    await DBHelper.instance.closeAndReset();
+    final dbPath = await _dbPath();
+    final previousDb = File(p.join(stage.path, 'previous.db'));
+    if (await previousDb.exists()) {
+      await deleteDatabase(dbPath);
+      await previousDb.copy(dbPath);
+    } else if (journal['hadDatabase'] == false) {
+      await deleteDatabase(dbPath);
+    }
+    final previousVault = Directory(p.join(stage.path, 'previous_vault'));
+    final vault = Directory(p.join(documents.path, '.sg_vault'));
+    if (await previousVault.exists()) {
+      if (await vault.exists()) await vault.delete(recursive: true);
+      await vault.create();
+      await for (final entry in previousVault.list(followLinks: false)) {
+        if (entry is File)
+          await entry.copy(p.join(vault.path, p.basename(entry.path)));
+      }
+    }
+    await _applySecrets(Map<String, dynamic>.from(journal['secrets'] as Map));
+    MediaService.instance.clearThumbnailCaches();
+    await _journalStorage.delete(key: _restoreJournalKey);
+    await stage.delete(recursive: true);
+  }
 
   Future<Directory> _vaultDir() async {
     final base = await getApplicationDocumentsDirectory();
@@ -73,7 +145,7 @@ class BackupService {
   }
 
   // ── Exportar ──────────────────────────────────────────────
-  Future<File> exportBackup({
+  Future<File> _exportBackup({
     required String password,
     void Function(String status)? onProgress,
   }) async {
@@ -89,124 +161,269 @@ class BackupService {
       'authMethod': authMethod.name,
       'aesKey': aesKey,
     });
-    final secretsEnc =
-        _encryptWithPassword(password, Uint8List.fromList(utf8.encode(secretsJson)));
+    final secretsEnc = _encryptWithPassword(
+        password, Uint8List.fromList(utf8.encode(secretsJson)));
 
-    final archive = Archive();
-    archive.addFile(ArchiveFile('secrets.enc', secretsEnc.length, secretsEnc));
-
-    onProgress?.call('Copiando base de datos...');
-    final dbFile = File(await _dbPath());
-    if (await dbFile.exists()) {
-      final dbBytes = await dbFile.readAsBytes();
-      archive.addFile(ArchiveFile('vault.db', dbBytes.length, dbBytes));
+    onProgress?.call('Preparando una copia coherente de la base de datos...');
+    await DBHelper.instance.database;
+    await DBHelper.instance.closeAndReset();
+    final temp = await (await getTemporaryDirectory()).createTemp('sg_backup_');
+    try {
+      final database =
+          await File(await _dbPath()).copy(p.join(temp.path, 'vault.db'));
+      final dir = await _vaultDir();
+      final files = await dir
+          .list(followLinks: false)
+          .where((e) => e is File)
+          .cast<File>()
+          .toList();
+      final output = p.join(temp.path,
+          'secret_gallery_${DateTime.now().millisecondsSinceEpoch}.sgbackup');
+      onProgress?.call('Escribiendo respaldo...');
+      await compute(_writeBackup, (
+        output: output,
+        database: database.path,
+        secrets: secretsEnc,
+        files: files.map((file) => file.path).toList(),
+      ));
+      await database.delete();
+      return File(output);
+    } catch (_) {
+      await temp.delete(recursive: true);
+      rethrow;
     }
-
-    final dir = await _vaultDir();
-    final files = dir.listSync().whereType<File>().toList();
-    for (int i = 0; i < files.length; i++) {
-      onProgress?.call('Copiando fotos y videos... (${i + 1}/${files.length})');
-      final bytes = await files[i].readAsBytes();
-      archive.addFile(
-          ArchiveFile('files/${p.basename(files[i].path)}', bytes.length, bytes));
-    }
-
-    final meta = jsonEncode({
-      'exportedAt': DateTime.now().toIso8601String(),
-      'fileCount': files.length,
-    });
-    archive.addFile(ArchiveFile('meta.json', meta.length, utf8.encode(meta)));
-
-    onProgress?.call('Comprimiendo respaldo...');
-    final zipBytes = ZipEncoder().encode(archive);
-    if (zipBytes == null) {
-      throw Exception('No se pudo comprimir el respaldo');
-    }
-
-    final tempDir = await getTemporaryDirectory();
-    final stamp = DateTime.now().millisecondsSinceEpoch;
-    final outFile =
-        File(p.join(tempDir.path, 'secret_gallery_backup_$stamp.sgbackup'));
-    await outFile.writeAsBytes(zipBytes);
-    return outFile;
   }
 
   // ── Restaurar ─────────────────────────────────────────────
   /// Reemplaza POR COMPLETO la bóveda actual (fotos, carpetas, PIN,
   /// contraseña y método de acceso) con el contenido del respaldo.
-  Future<void> restoreBackup({
+  Future<void> _restoreBackup({
     required File backupFile,
     required String password,
     void Function(String status)? onProgress,
   }) async {
-    onProgress?.call('Leyendo respaldo...');
-    final bytes = await backupFile.readAsBytes();
-    final archive = ZipDecoder().decodeBytes(bytes);
-
-    final secretsFile = archive.findFile('secrets.enc');
-    if (secretsFile == null) {
-      throw Exception('Este archivo no es un respaldo válido de Secret Gallery HD');
-    }
-
-    Map<String, dynamic> secrets;
+    onProgress?.call('Validando respaldo antes de reemplazar datos...');
+    final documents = await getApplicationDocumentsDirectory();
+    final stage = await documents.createTemp('sg_restore_');
+    final stagedVault = await Directory(p.join(stage.path, 'files')).create();
+    final currentVault = await _vaultDir();
+    final stagedDb = File(p.join(stage.path, 'vault.db'));
+    bool keepRecovery = false;
     try {
-      final decrypted = _decryptWithPassword(
-          password, Uint8List.fromList(secretsFile.content as List<int>));
-      secrets = jsonDecode(utf8.decode(decrypted)) as Map<String, dynamic>;
-    } catch (_) {
-      throw Exception('Contraseña de respaldo incorrecta');
-    }
-
-    onProgress?.call('Restaurando base de datos...');
-    await DBHelper.instance.closeAndReset();
-    final dbEntry = archive.findFile('vault.db');
-    if (dbEntry != null) {
+      final secrets = await compute(_extractBackup, (
+        archive: backupFile.path,
+        stage: stage.path,
+        password: password,
+      ));
+      validateBackupSecrets(secrets);
       final dbPath = await _dbPath();
-      await File(dbPath).writeAsBytes(dbEntry.content as List<int>);
-    }
-
-    onProgress?.call('Restaurando fotos y videos...');
-    final dir = await _vaultDir();
-    for (final f in dir.listSync().whereType<File>()) {
+      final available =
+          (await stagedVault.list().where((e) => e is File).toList())
+              .map((e) => p.basename(e.path))
+              .toSet();
+      final candidate =
+          await openDatabase(stagedDb.path, singleInstance: false);
       try {
-        await f.delete();
-      } catch (_) {}
-    }
-    for (final entry in archive.files) {
-      if (!entry.isFile || !entry.name.startsWith('files/')) continue;
-      final fileName = entry.name.substring('files/'.length);
-      if (fileName.isEmpty) continue;
-      final outFile = File(p.join(dir.path, fileName));
-      await outFile.writeAsBytes(entry.content as List<int>);
-    }
+        final version = await candidate.getVersion();
+        if (version < 1 || version > 5)
+          throw const FormatException('Versión de respaldo no compatible');
+        final check = await candidate.rawQuery('PRAGMA quick_check');
+        if (check.length != 1 || check.first.values.first != 'ok')
+          throw const FormatException('Base de datos dañada');
+        await candidate.transaction((txn) async {
+          for (final table in ['photos', 'trash', 'intruders', 'folders']) {
+            final rows = await txn.query(table);
+            for (final row in rows) {
+              final changes = <String, dynamic>{};
+              final column =
+                  table == 'folders' ? 'cover_photo_path' : 'encrypted_path';
+              final path = row[column] as String?;
+              if (path != null && path.isNotEmpty) {
+                changes[column] =
+                    relocateBackupPath(path, currentVault.path, available);
+              }
+              for (final field in ['folder_payload', 'photo_payload']) {
+                final payload = row[field] as String?;
+                if (payload == null) continue;
+                final data = jsonDecode(payload) as Map<String, dynamic>;
+                void remap(Map<String, dynamic> record, String key) {
+                  final old = record[key] as String?;
+                  if (old != null && old.isNotEmpty)
+                    record[key] =
+                        relocateBackupPath(old, currentVault.path, available);
+                }
 
-    onProgress?.call('Restaurando método de acceso...');
+                if (field == 'photo_payload') {
+                  remap(data, 'encrypted_path');
+                } else {
+                  for (final photo in data['photos'] as List) {
+                    remap(photo as Map<String, dynamic>, 'encrypted_path');
+                  }
+                  for (final folder in data['folders'] as List) {
+                    remap(folder as Map<String, dynamic>, 'cover_photo_path');
+                  }
+                }
+                changes[field] = jsonEncode(data);
+              }
+              if (changes.isNotEmpty)
+                await txn.update(table, changes,
+                    where: 'id = ?', whereArgs: [row['id']]);
+            }
+          }
+        });
+      } finally {
+        await candidate.close();
+      }
+
+      final oldSecrets = <String, dynamic>{
+        'pin': await PinService().rawPin(),
+        'password': await PasswordService().rawPassword(),
+        'authMethod': (await PrefsService.instance.getAuthMethod()).name,
+        'aesKey': await CryptoService().rawKeyBase64(),
+      };
+      final oldDb = File(p.join(stage.path, 'previous.db'));
+      final oldVault = Directory(p.join(stage.path, 'previous_vault'));
+      await _journalStorage.write(
+          key: _restoreJournalKey,
+          value: jsonEncode({
+            'stage': stage.path,
+            'hadDatabase': await File(dbPath).exists(),
+            'secrets': oldSecrets,
+          }));
+      bool movedVault = false;
+      bool movedDb = false;
+      bool installedVault = false;
+      bool installedDb = false;
+      try {
+        await DBHelper.instance.closeAndReset();
+        onProgress?.call('Instalando respaldo validado...');
+        if (await File(dbPath).exists()) {
+          await File(dbPath).rename(oldDb.path);
+          movedDb = true;
+        }
+        await currentVault.rename(oldVault.path);
+        movedVault = true;
+        await stagedVault.rename(currentVault.path);
+        installedVault = true;
+        await stagedDb.rename(dbPath);
+        installedDb = true;
+        await _applySecrets(secrets);
+        await DBHelper.instance
+            .database; // Run migrations before considering installation complete.
+        MediaService.instance.clearThumbnailCaches();
+      } catch (_) {
+        await DBHelper.instance.closeAndReset();
+        try {
+          if (installedDb) await deleteDatabase(dbPath);
+          if (movedDb) await oldDb.rename(dbPath);
+          if (installedVault)
+            await Directory(currentVault.path).delete(recursive: true);
+          if (movedVault) await oldVault.rename(currentVault.path);
+          await _applySecrets(oldSecrets);
+          await _journalStorage.delete(key: _restoreJournalKey);
+          MediaService.instance.clearThumbnailCaches();
+        } catch (_) {
+          keepRecovery = true;
+          throw StateError(
+              'No se pudo completar la recuperación. Conserva los datos de la aplicación para recuperar la copia anterior.');
+        }
+        rethrow;
+      }
+      try {
+        await _journalStorage.delete(key: _restoreJournalKey);
+      } catch (_) {
+        keepRecovery = true;
+        rethrow;
+      }
+      onProgress?.call('Listo');
+    } finally {
+      if (!keepRecovery && await stage.exists())
+        await stage.delete(recursive: true);
+    }
+  }
+
+  Future<void> _applySecrets(Map<String, dynamic> secrets) async {
     final pin = secrets['pin'] as String?;
-    if (pin != null && pin.isNotEmpty) {
-      await PinService().savePin(pin);
-    } else {
+    if (pin == null || pin.isEmpty) {
       await PinService().deletePin();
-    }
-
-    final pw = secrets['password'] as String?;
-    if (pw != null && pw.isNotEmpty) {
-      await PasswordService().savePassword(pw);
     } else {
+      await PinService().savePin(pin);
+    }
+    final password = secrets['password'] as String?;
+    if (password == null || password.isEmpty) {
       await PasswordService().deletePassword();
+    } else {
+      await PasswordService().savePassword(password);
     }
+    await CryptoService().setRawKeyBase64(secrets['aesKey'] as String);
+    await PrefsService.instance.saveAuthMethod(AuthMethod.values.firstWhere(
+        (method) => method.name == secrets['authMethod'],
+        orElse: () => AuthMethod.pin));
+  }
+}
 
-    final aesKey = secrets['aesKey'] as String?;
-    if (aesKey != null) {
-      await CryptoService().setRawKeyBase64(aesKey);
+Future<void> _writeBackup(
+    ({
+      String output,
+      String database,
+      Uint8List secrets,
+      List<String> files
+    }) job) async {
+  final encoder = ZipFileEncoder()
+    ..create(job.output, level: ZipFileEncoder.STORE);
+  try {
+    encoder.addArchiveFile(
+        ArchiveFile('secrets.enc', job.secrets.length, job.secrets));
+    await encoder.addFile(File(job.database), 'vault.db', ZipFileEncoder.STORE);
+    for (final path in job.files) {
+      await encoder.addFile(
+          File(path), 'files/${p.basename(path)}', ZipFileEncoder.STORE);
     }
+    final meta = utf8.encode(jsonEncode({
+      'exportedAt': DateTime.now().toIso8601String(),
+      'fileCount': job.files.length
+    }));
+    encoder.addArchiveFile(ArchiveFile('meta.json', meta.length, meta));
+  } finally {
+    await encoder.close();
+  }
+}
 
-    final authName = secrets['authMethod'] as String?;
-    final method = AuthMethod.values.firstWhere(
-      (e) => e.name == authName,
-      orElse: () => AuthMethod.pin,
-    );
-    await PrefsService.instance.saveAuthMethod(method);
-
-    onProgress?.call('Listo');
+Map<String, dynamic> _extractBackup(
+    ({String archive, String stage, String password}) job) {
+  final input = InputFileStream(job.archive);
+  try {
+    final archive = ZipDecoder().decodeBuffer(input);
+    final seen = <String>{};
+    for (final entry in archive.files) {
+      if (!entry.isFile) continue;
+      validateBackupEntryName(entry.name);
+      if (!seen.add(entry.name))
+        throw const FormatException('Entradas duplicadas en el respaldo');
+    }
+    final secretsEntry = archive.findFile('secrets.enc');
+    if (secretsEntry == null ||
+        !seen.contains('vault.db') ||
+        secretsEntry.size > 1024 * 1024) {
+      throw const FormatException('Respaldo incompleto');
+    }
+    final clear = BackupService.instance._decryptWithPassword(
+        job.password, Uint8List.fromList(secretsEntry.content as List<int>));
+    final secrets = jsonDecode(utf8.decode(clear)) as Map<String, dynamic>;
+    validateBackupSecrets(secrets);
+    for (final entry in archive.files) {
+      if (!entry.isFile ||
+          entry.name == 'secrets.enc' ||
+          entry.name == 'meta.json') continue;
+      final output = OutputFileStream(p.join(job.stage, entry.name));
+      try {
+        entry.writeContent(output);
+      } finally {
+        output.closeSync();
+      }
+    }
+    return secrets;
+  } finally {
+    input.closeSync();
   }
 }

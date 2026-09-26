@@ -1,3 +1,4 @@
+import '../../shared/widgets/media_drag_move.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -45,7 +46,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   String _search = '';
   final _searchCtrl = TextEditingController();
 
-  GridViewType _viewType = GridViewType.grid3;
+  GridViewType _viewType = GridViewType.grid5;
   String _currentSort = 'newest';
   bool _narrowBorders = false;
   bool _showPhotoPreview = true;
@@ -110,6 +111,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       final subsubs = await _db.getSubFolders(s['id']);
       return {...s, 'total_count': count, 'sub_count': subsubs.length};
     }));
+    if (!mounted) return;
     setState(() {
       _subFolders = enriched;
       _photos = photos;
@@ -905,6 +907,48 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   }
 
   // ── GRID VIEW ────────────────────────────────────────────
+  bool _movingByDrag = false;
+
+  Widget _dragPhoto(Map<String, dynamic> photo, {required Widget child}) =>
+      SelectedMediaDrag(
+        key: ValueKey('drag_${photo['id']}'),
+        enabled: !_movingByDrag && !_selectingFolders &&
+            _selectedPhotoIds.contains(photo['id']),
+        ids: _selectedPhotoIds,
+        photo: photo,
+        showPreview: _showPhotoPreview,
+        child: child,
+      );
+
+  Widget _dropFolder(Map<String, dynamic> folder, {required Widget child}) =>
+      MediaFolderDrop(
+        key: ValueKey('drop_${folder['id']}'),
+        enabled: !_movingByDrag && !_selectingFolders,
+        onDrop: (selection) => _moveDraggedPhotos(selection, folder['id'] as int),
+        child: child,
+      );
+
+  Future<void> _moveDraggedPhotos(MediaDragSelection selection, int folderId) async {
+    if (_movingByDrag || !mounted) return;
+    setState(() => _movingByDrag = true);
+    try {
+      await _db.movePhotos(selection.ids, folderId);
+      if (!mounted) return;
+      setState(() {
+        _selectedPhotoIds.removeAll(selection.ids);
+        _selectingPhotos = _selectedPhotoIds.isNotEmpty;
+      });
+      await _load();
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No se pudieron mover los archivos. Intenta de nuevo.')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _movingByDrag = false);
+    }
+  }
   Widget _buildGridView() {
     final spacing = _narrowBorders ? 1.0 : 2.0;
     final allItems = [
@@ -930,7 +974,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
         if (item['type'] == 'folder') {
           final folder = item['data'] as Map<String, dynamic>;
           final id = folder['id'] as int;
-          return FolderThumbnail(
+          return _dropFolder(folder, child: FolderThumbnail(
             key: ValueKey('sub_folder_$id'),
             folder: folder,
             isSelected: _selectedFolderIds.contains(id),
@@ -958,12 +1002,12 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
               });
             },
             onMenuTap: (offset) => _showFolderMenu(folder, offset),
-          );
+          ));
         }
 
         final photo = item['data'] as Map<String, dynamic>;
         final id = photo['id'] as int;
-        return PhotoThumbnail(
+        return _dragPhoto(photo, child: PhotoThumbnail(
           key: ValueKey(photo['encrypted_path']),
           photo: photo,
           isSelected: _selectedPhotoIds.contains(id),
@@ -997,13 +1041,13 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
               }
             }
           },
-          onLongPress: () {
+          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
             setState(() {
               _selectingPhotos = true;
               _selectedPhotoIds.add(id);
             });
           },
-        );
+        ));
       },
     );
   }
@@ -1028,7 +1072,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
           final count = (folder['total_count'] as int?) ?? 0;
           final subs = (folder['sub_count'] as int?) ?? 0;
 
-          return ListTile(
+          return _dropFolder(folder, child: ListTile(
             tileColor: isSelected
                 ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
                 : Colors.transparent,
@@ -1097,14 +1141,14 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
               child: Icon(Icons.more_vert,
                   color: context.colors.textMuted, size: 20),
             ),
-          );
+          ));
         }
 
         final photo = item['data'] as Map<String, dynamic>;
         final id = photo['id'] as int;
         final isSelected = _selectedPhotoIds.contains(id);
 
-        return ListTile(
+        return _dragPhoto(photo, child: ListTile(
           tileColor: isSelected
               ? Theme.of(context).colorScheme.primary.withOpacity(0.15)
               : Colors.transparent,
@@ -1137,7 +1181,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
               }
             }
           },
-          onLongPress: () {
+          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
             setState(() {
               _selectingPhotos = true;
               _selectedPhotoIds.add(id);
@@ -1170,7 +1214,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
             style: GoogleFonts.poppins(
                 color: context.colors.textMuted, fontSize: 11),
           ),
-        );
+        ));
       },
     );
   }
@@ -1254,7 +1298,7 @@ class _ListPhotoThumbState extends State<_ListPhotoThumb> {
   void initState() {
     super.initState();
     MediaService.instance
-        .getPhotoBytes(widget.photo['encrypted_path'])
+        .getPhotoThumbnail(widget.photo['encrypted_path'])
         .then((b) {
       if (mounted) setState(() => _bytes = b);
     });

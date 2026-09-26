@@ -66,6 +66,8 @@ class VaultCryptoPlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
                     }
                 }
                 main.post { result.success(value) }
+            } catch (e: OutOfMemoryError) {
+                main.post { result.error("vault_memory", "No hay memoria suficiente para esta vista previa.", null) }
             } catch (e: Exception) {
                 // Do not log key material or private paths.
                 main.post { result.error("vault_crypto", "No se pudo procesar el archivo de forma segura.", null) }

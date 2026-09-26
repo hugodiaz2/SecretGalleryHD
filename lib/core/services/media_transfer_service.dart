@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'vault_activity.dart';
 import 'dart:math';
 import 'dart:typed_data';
 import 'package:path/path.dart' as p;
@@ -58,7 +59,17 @@ class MediaTransferService {
   final Map<int, String> _uncommittedExports = {};
 
   Future<T> _exclusive<T>(Future<T> Function() action) {
-    final next = _tail.then((_) => action());
+    if (VaultActivity.backup) {
+      return Future<T>.error(StateError('Espera a que termine el respaldo.'));
+    }
+    VaultActivity.transfers++;
+    final next = _tail.then((_) async {
+      try {
+        return await action();
+      } finally {
+        VaultActivity.transfers--;
+      }
+    });
     _tail = next.then<void>((_) {}, onError: (Object _, StackTrace __) {});
     return next;
   }

@@ -12,10 +12,20 @@ class CryptoService {
   static const _keyName = 'sg_aes_key';
   static const _native = MethodChannel('secret_gallery/crypto');
   final _storage = const FlutterSecureStorage(
-    aOptions: AndroidOptions(resetOnError: true),
+    aOptions: AndroidOptions(resetOnError: false),
   );
   static Key? _key;
   static Future<Key>? _loadingKey;
+
+  static Future<bool> hasProtectedFiles() async {
+    final base = await getApplicationDocumentsDirectory();
+    final directory = Directory(p.join(base.path, '.sg_vault'));
+    if (!await directory.exists()) return false;
+    await for (final entry in directory.list(followLinks: false)) {
+      if (entry is File && entry.path.endsWith('.enc')) return true;
+    }
+    return false;
+  }
 
   Future<Key> _getKey() async {
     if (_key != null) return _key!;
@@ -33,6 +43,10 @@ class CryptoService {
   Future<Key> _readOrCreateKey() async {
     String? stored = await _storage.read(key: _keyName);
     if (stored == null) {
+      if (await hasProtectedFiles()) {
+        throw StateError(
+            'Falta la clave de una bóveda existente. No se creará otra clave.');
+      }
       final newKey = Key.fromSecureRandom(32);
       await _storage.write(key: _keyName, value: newKey.base64);
       _key = newKey;
