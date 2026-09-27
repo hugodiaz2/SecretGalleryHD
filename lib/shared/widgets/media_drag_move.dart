@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'photo_thumbnail.dart';
+import 'folder_thumbnail.dart';
 
 class MediaDragSelection {
   final List<int> ids;
-  MediaDragSelection(Iterable<int> ids) : ids = List.unmodifiable(ids);
+  final bool folders;
+  MediaDragSelection(Iterable<int> ids, {this.folders = false})
+      : ids = List.unmodifiable(ids);
 }
 
 /// Hold an already selected item to lift the whole selection.
@@ -13,9 +16,13 @@ class SelectedMediaDrag extends StatefulWidget {
   final Iterable<int> ids;
   final Map<String, dynamic> photo;
   final bool showPreview;
+  final bool isFolder;
+  final VoidCallback? onSelect;
   final Widget child;
   const SelectedMediaDrag(
       {super.key,
+      this.isFolder = false,
+      this.onSelect,
       required this.enabled,
       required this.ids,
       required this.photo,
@@ -29,6 +36,7 @@ class SelectedMediaDrag extends StatefulWidget {
 class _SelectedMediaDragState extends State<SelectedMediaDrag>
     with AutomaticKeepAliveClientMixin {
   bool _dragging = false;
+  double _dragDistance = 0;
   @override
   bool get wantKeepAlive => _dragging;
   Timer? _scrollTimer;
@@ -75,22 +83,29 @@ class _SelectedMediaDragState extends State<SelectedMediaDrag>
   Widget build(BuildContext context) {
     super.build(context);
     if (!widget.enabled) return widget.child;
-    final selection = MediaDragSelection(widget.ids);
+    final selection = MediaDragSelection(widget.ids, folders: widget.isFolder);
     return LongPressDraggable<MediaDragSelection>(
       data: selection,
       maxSimultaneousDrags: 1,
       delay: const Duration(milliseconds: 300),
       dragAnchorStrategy: pointerDragAnchorStrategy,
       onDragStarted: () {
+        _dragDistance = 0;
         _dragging = true;
         updateKeepAlive();
         _startScroll();
       },
-      onDragUpdate: (details) => _pointer = details.globalPosition,
-      onDragEnd: (_) {
+      onDragUpdate: (details) {
+        _pointer = details.globalPosition;
+        _dragDistance += details.delta.distance;
+      },
+      onDragEnd: (details) {
         _stopScroll();
         if (mounted) {
           _dragging = false;
+          if (!details.wasAccepted && _dragDistance < 10) {
+            widget.onSelect?.call();
+          }
           updateKeepAlive();
         }
       },
@@ -111,10 +126,25 @@ class _SelectedMediaDragState extends State<SelectedMediaDrag>
                 width: 96,
                 height: 112,
                 child: Stack(fit: StackFit.expand, children: [
-                  PhotoThumbnail(
-                      key: ValueKey(widget.photo['encrypted_path']),
-                      photo: widget.photo,
-                      showPreview: widget.showPreview),
+                  if (widget.isFolder && !widget.showPreview)
+                    const ColoredBox(
+                        color: Color(0xFF2A2A2A),
+                        child: Center(
+                            child: Icon(Icons.folder, color: Colors.white54)))
+                  else if (widget.isFolder)
+                    FolderThumbnail(
+                        folder: widget.photo,
+                      showCount: widget.photo['parent_id'] != null,
+                        isSelected: false,
+                        showPreview: widget.showPreview,
+                        onTap: () {},
+                        onLongPress: () {},
+                        onMenuTap: (_) {})
+                  else
+                    PhotoThumbnail(
+                        key: ValueKey(widget.photo['encrypted_path']),
+                        photo: widget.photo,
+                        showPreview: widget.showPreview),
                   Positioned(
                       left: 0,
                       right: 0,
@@ -124,7 +154,7 @@ class _SelectedMediaDragState extends State<SelectedMediaDrag>
                           child: Padding(
                               padding: const EdgeInsets.all(6),
                               child: Text(
-                                  '${selection.ids.length} archivo${selection.ids.length == 1 ? '' : 's'}',
+                                  '${selection.ids.length} ${widget.isFolder ? 'carpeta' : 'archivo'}${selection.ids.length == 1 ? '' : 's'}',
                                   textAlign: TextAlign.center,
                                   style: const TextStyle(
                                       color: Colors.white, fontSize: 12))))),
@@ -137,54 +167,77 @@ class _SelectedMediaDragState extends State<SelectedMediaDrag>
   }
 }
 
-class MediaFolderDrop extends StatelessWidget {
+class MediaFolderDrop extends StatefulWidget {
   final bool enabled;
+  final bool Function(MediaDragSelection)? canAccept;
+  final bool moveIntoCenter;
   final ValueChanged<MediaDragSelection> onDrop;
+  final void Function(MediaDragSelection, bool after)? onReorder;
   final Widget child;
   const MediaFolderDrop(
       {super.key,
       required this.enabled,
+      this.canAccept,
+      this.moveIntoCenter = false,
       required this.onDrop,
+      this.onReorder,
       required this.child});
 
   @override
+  State<MediaFolderDrop> createState() => _MediaFolderDropState();
+}
+
+class _MediaFolderDropState extends State<MediaFolderDrop> {
+  bool _after = false;
+  bool _inCenter = false;
+  void _position(Offset offset) {
+    if (widget.onReorder == null) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final y = box.globalToLocal(offset).dy;
+    final after = y >= box.size.height / 2;
+    final center = widget.moveIntoCenter &&
+        y >= box.size.height * 0.25 && y <= box.size.height * 0.75;
+    if (after != _after || center != _inCenter) {
+      setState(() { _after = after; _inCenter = center; });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) => DragTarget<MediaDragSelection>(
-        onWillAcceptWithDetails: (details) =>
-            enabled && details.data.ids.isNotEmpty,
-        onAcceptWithDetails: (details) => onDrop(details.data),
+        onWillAcceptWithDetails: (details) {
+          _position(details.offset);
+          return widget.enabled &&
+              details.data.ids.isNotEmpty &&
+              (widget.canAccept?.call(details.data) ?? true);
+        },
+        onMove: (details) => _position(details.offset),
+        onAcceptWithDetails: (details) {
+          if (widget.onReorder != null && !_inCenter) {
+            widget.onReorder!(details.data, _after);
+          } else {
+            widget.onDrop(details.data);
+          }
+        },
         builder: (context, candidates, rejected) {
-          final hovering = candidates.isNotEmpty && enabled;
+          final hovering = candidates.isNotEmpty && widget.enabled;
           final color = Theme.of(context).colorScheme.primary;
+          final reorder = widget.onReorder != null && !_inCenter;
           return AnimatedScale(
-            scale: hovering ? 0.94 : 1,
+            scale: hovering && !reorder ? 0.94 : 1,
             duration: const Duration(milliseconds: 160),
             child: Stack(fit: StackFit.passthrough, children: [
-              child,
+              widget.child,
               Positioned.fill(
                   child: IgnorePointer(
                       child: AnimatedContainer(
                 duration: const Duration(milliseconds: 160),
                 decoration: BoxDecoration(
-                    color: hovering
-                        ? color.withValues(alpha: 0.25)
+                    color: hovering && !reorder ? color.withValues(alpha: 0.25)
                         : Colors.transparent,
-                    borderRadius: BorderRadius.circular(10),
-                    border: Border.all(
-                        color: hovering ? color : Colors.transparent,
-                        width: 3)),
-                child: hovering
-                    ? const Center(
-                        child: DecoratedBox(
-                            decoration: BoxDecoration(
-                                color: Colors.black87,
-                                borderRadius:
-                                    BorderRadius.all(Radius.circular(8))),
-                            child: Padding(
-                                padding: EdgeInsets.all(8),
-                                child: Text('Soltar aquí',
-                                    style: TextStyle(
-                                        color: Colors.white, fontSize: 12)))))
-                    : null,
+                    borderRadius: reorder ? null : BorderRadius.circular(10),
+                    border: Border.all(color: hovering && !reorder ? color : Colors.transparent, width: 3)),
+
               ))),
             ]),
           );

@@ -46,7 +46,12 @@ class PrefsService {
 
   // ── Sort ────────────────────────────────────────────────
   Future<String> getSort() async {
-    return await _storage.read(key: _keySort) ?? 'newest';
+    // Adopt the new default once, including existing installations.
+    if (await _storage.read(key: 'manual_sort_default_v1') != 'true') {
+      await _storage.write(key: _keySort, value: 'manual');
+      await _storage.write(key: 'manual_sort_default_v1', value: 'true');
+    }
+    return await _storage.read(key: _keySort) ?? 'manual';
   }
 
   Future<void> saveSort(String sort) async {

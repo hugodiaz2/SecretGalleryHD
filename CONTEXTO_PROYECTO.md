@@ -502,3 +502,41 @@ El nuevo canal Android requiere reconstruir e instalar la aplicación; hot reloa
 
 - getGridType usa grid5 cuando no existe una preferencia guardada. Home, carpetas y papelera también empiezan con grid5 mientras cargan preferencias.
 - Se mantienen las opciones de diseño y se respeta cualquier vista elegida y guardada anteriormente. No requiere migración de datos. Pendiente incluir en la próxima APK.
+## 35. ACT-023 — Carpetas arrastrables y orden manual (2026-09-26)
+
+- En orden normal, seleccionar una carpeta y mantenerla pulsada de nuevo permite arrastrar la selección dentro de otra carpeta. Funciona en Home y subcarpetas, lista y cuadrícula. El menú Mover se conserva para otros destinos, incluido Home.
+- Diseño y vista > Ordenar por > Orden manual permite mantener pulsado y arrastrar directamente una foto, video o carpeta antes/después de otra tarjeta. Mezcla carpetas y medios; arriba/abajo del destino determina la inserción. En este modo soltar ordena, no cambia el contenedor; el menú Mover sigue disponible. Se muestra una indicación del modo. Reordenar está desactivado durante búsquedas para no guardar un orden parcial.
+- Esquema SQLite 6: manual_order nullable en photos/folders e índices photos_folder/folders_parent. Guarda posiciones por carpeta en una transacción y batch; solo escribe posiciones distintas, sin leer ni copiar archivos multimedia. Elementos nuevos o movidos se añaden al final del orden manual; cambiar a fecha/nombre no borra el orden guardado.
+- moveFolders valida la cadena de padres y rechaza ciclos, destino propio, descendientes, destinos inexistentes y selecciones desaparecidas; movimiento grupal transaccional. El selector tradicional usa el mismo método. Restauración de respaldos admite esquema 6; archivo de base mantiene el mismo nombre.
+- Aclaración del usuario: aumentar imágenes SOLO en el popup de mover. Sus tarjetas pasan de una referencia de 64 a 110 dp, con 2–5 columnas adaptables. La vista principal predeterminada sigue en 5×5.
+- Pruebas: 37 aprobadas, incluyendo orden mixto, grupos, cancelación, desplazamiento, arrastre de carpetas, rechazo de ciclos y 10.000 registros sintéticos. Análisis sin errores, con avisos anteriores de estilo/deprecación. Falta comprobar migración SQLite y tacto/rendimiento con la bóveda real en Android; no se manipularon archivos del usuario.
+## 36. ACT-024 — Contadores solo dentro de carpetas (2026-09-26)
+
+- Home oculta la cantidad de archivos en tarjetas de carpetas y filas de lista. Las subcarpetas al entrar conservan sus contadores.
+- FolderThumbnail añade showCount (true por defecto); Home usa false. La miniatura flotante de una carpeta raíz también oculta su total de archivos.
+- Solo cambio visual. Sin pruebas ni nueva compilación, por petición del usuario.
+## 37. ACT-025 — Arrastre permanente y popup 4×4 (2026-09-26)
+
+- Orden manual predeterminado, también al actualizar instalaciones anteriores mediante migración única de preferencia manual_sort_default_v1. Se retira la opción Manual del panel; fecha, nombre y tamaño siguen disponibles. Arrastrar desde cualquier orden guarda automáticamente un nuevo orden personalizado.
+- Arrastrar siempre disponible sin búsqueda activa. Mantener pulsado también inicia selección para permitir grupos. En carpeta destino: centro (50% central de altura) mueve dentro; borde superior/inferior coloca antes/después. En foto destino se reordena antes/después. Conserva protección contra ciclos.
+- Popup de mover con 4 columnas fijas, conservando desplazamiento vertical; vista principal 5×5 sin cambios.
+- Nombre ascendente utiliza comparador compartido que prioriza letras antes de números, ignora mayúsculas y trata vocales acentuadas/ñ para nombres en español. Aplicado a fotos, carpetas y selector de destino.
+- Solo cambios de código y documentación. Sin pruebas ni compilación por petición del usuario.
+## 38. ACT-026 — Elegir portada navegando por carpetas (2026-09-26)
+
+- CoverPickerSheet muestra carpetas y archivos del nivel actual en cuatro columnas. Inicia dentro de la carpeta que se quiere personalizar; permite entrar a subcarpetas, regresar y acceder a Home para elegir contenido de otra carpeta.
+- La portada se guarda siempre en folderId original, independientemente del destino explorado. No mueve ni duplica fotos. Se mantiene Quitar portada.
+- Reemplaza la carga recursiva de todos los medios (incluida una lista SQLite no modificable que se intentaba ampliar) por consultas del nivel visible y miniaturas compartidas diferidas. Estados de carga, vacío y error con reintento; evita actualizaciones después de cerrar y selecciones repetidas durante guardado.
+- Solo edición de código/documentación: sin ejecutar pruebas ni generar APK, según preferencia del usuario.
+## 39. ACT-027 — Arrastre sin mensajes y selección por barrido (2026-09-26)
+
+- Se retira la franja de instrucciones de Home/subcarpetas y los textos «Colocar antes/después» y «Soltar aquí» de los destinos de arrastre. Mover no añade el elemento a la selección.
+- Soltar sobre una foto coloca el grupo en la posición anterior del destino y desplaza los elementos intermedios, sin preguntar ni depender de la mitad superior/inferior. La vista refleja el nuevo orden inmediatamente mientras se guarda; al fallar vuelve a los datos cargados. Se conserva mover dentro de una carpeta al soltar en su centro.
+- Selector de importación: mantener pulsado y deslizar selecciona un rango de fotos/videos. Si empieza sobre un elemento seleccionado, desmarca el rango. Retroceder el dedo restaura la selección inicial fuera del rango. Bordes desplazan automáticamente; desplazamiento normal sin mantener pulsado no selecciona.
+- Selección por barrido calcula índices con la cuadrícula de 5 columnas y actualiza únicamente los bordes del rango cambiado. Temporizador y controlador se limpian al terminar, salir o importar. No oculta archivos hasta pulsar Ocultar.
+- Solo cambios de código/documentación. No se ejecutaron pruebas ni se generó APK por petición del usuario.
+## 40. ACT-028 — Recuperar selección sin confundirla con arrastre (2026-09-26)
+
+- Mantener pulsado y soltar sin desplazar el dedo inicia selección de una foto/video o carpeta. Después se seleccionan más mediante toques normales.
+- Mantener pulsado y arrastrar conserva el movimiento sin seleccionar automáticamente. SelectedMediaDrag distingue una pulsación quieta (desplazamiento acumulado menor de 10 dp y sin destino aceptado) del arrastre.
+- Aplicado en Home y subcarpetas, cuadrícula y lista. Sin pruebas ni compilación por preferencia del usuario.

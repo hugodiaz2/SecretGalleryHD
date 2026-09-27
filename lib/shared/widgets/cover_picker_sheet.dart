@@ -1,12 +1,11 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import '../../core/database/db_helper.dart';
-import '../../core/services/media_service.dart';
+import '../../core/services/gallery_order.dart';
+import 'folder_thumbnail.dart';
+import 'photo_thumbnail.dart';
 
 class CoverPickerSheet extends StatefulWidget {
   final int folderId;
-
   const CoverPickerSheet({super.key, required this.folderId});
 
   @override
@@ -14,216 +13,168 @@ class CoverPickerSheet extends StatefulWidget {
 }
 
 class _CoverPickerSheetState extends State<CoverPickerSheet> {
+  final _db = DBHelper.instance;
+  List<Map<String, dynamic>> _folders = [];
   List<Map<String, dynamic>> _photos = [];
+  List<Map<String, dynamic>> _trail = [];
   String? _currentCover;
+  String _targetName = 'carpeta';
   bool _loading = true;
+  bool _failed = false;
+  bool _saving = false;
+  int _request = 0;
 
   @override
   void initState() {
     super.initState();
-    _load();
+    _initialize();
   }
 
-  Future<void> _load() async {
-    // Fotos de esta carpeta y subcarpetas
-    final photos = await _getAllPhotos(widget.folderId);
-    final cover = await DBHelper.instance.getCoverPhoto(widget.folderId);
-    setState(() {
-      _photos = photos;
-      _currentCover = cover;
-      _loading = false;
-    });
-  }
-
-  Future<List<Map<String, dynamic>>> _getAllPhotos(int folderId) async {
-    final db = DBHelper.instance;
-    final photos = await db.getPhotosByFolder(folderId);
-    final subs = await db.getSubFolders(folderId);
-    for (final sub in subs) {
-      photos.addAll(await _getAllPhotos(sub['id'] as int));
+  Future<void> _initialize() async {
+    try {
+      final target = await _db.getFolder(widget.folderId);
+      if (!mounted) return;
+      if (target == null) throw StateError('La carpeta ya no existe.');
+      _targetName = target['name'] as String;
+      _currentCover = target['cover_photo_path'] as String?;
+      await _navigate([target]);
+    } catch (_) {
+      if (mounted) setState(() { _loading = false; _failed = true; });
     }
-    return photos;
   }
 
-  Future<void> _selectCover(Map<String, dynamic> photo) async {
-    await DBHelper.instance.setCoverPhoto(
-        widget.folderId, photo['encrypted_path'] as String);
-    if (mounted) Navigator.pop(context, true);
+  Future<void> _navigate(List<Map<String, dynamic>> trail) async {
+    if (_saving) return;
+    final request = ++_request;
+    setState(() {
+      _trail = List.of(trail);
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final id = trail.isEmpty ? 0 : trail.last['id'] as int;
+      // Query only this level. Do not collect all descendant media into memory.
+      final results = await Future.wait([
+        id == 0 ? _db.getRootFolders() : _db.getSubFolders(id),
+        _db.getPhotosByFolder(id),
+      ]);
+      final folders = List<Map<String, dynamic>>.from(results[0]);
+      folders.sort((a, b) => compareGalleryNames(a['name'] as String, b['name'] as String));
+      if (!mounted || request != _request) return;
+      setState(() {
+        _folders = folders;
+        _photos = results[1];
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted || request != _request) return;
+      setState(() { _loading = false; _failed = true; });
+    }
   }
 
-  Future<void> _removeCover() async {
-    await DBHelper.instance.setCoverPhoto(widget.folderId, '');
-    if (mounted) Navigator.pop(context, true);
+  Future<void> _saveCover(String path) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+    try {
+      // The destination is always the original folder, never the browsed folder.
+      if (await _db.getFolder(widget.folderId) == null) {
+        throw StateError('La carpeta ya no existe.');
+      }
+      await _db.setCoverPhoto(widget.folderId, path);
+      if (!mounted) return;
+      setState(() => _saving = false);
+      Navigator.pop(context, true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _saving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo guardar la portada. Intenta de nuevo.')),
+      );
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
-      decoration: const BoxDecoration(
-        color: Color(0xFF1A1A1A),
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          Container(
-            width: 40,
-            height: 4,
-            margin: const EdgeInsets.symmetric(vertical: 12),
-            decoration: BoxDecoration(
-                color: Colors.white24,
-                borderRadius: BorderRadius.circular(2)),
-          ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('Elegir portada',
-                    style: GoogleFonts.poppins(
-                        color: Colors.white,
-                        fontSize: 16,
-                        fontWeight: FontWeight.w600)),
+    final theme = Theme.of(context);
+    return PopScope(
+      canPop: !_saving,
+      child: SafeArea(
+        top: false,
+        child: Container(
+          height: MediaQuery.sizeOf(context).height * 0.8,
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface,
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(20))),
+          child: Column(children: [
+            Container(width: 40, height: 4,
+              margin: const EdgeInsets.symmetric(vertical: 12),
+              decoration: BoxDecoration(color: theme.dividerColor,
+                borderRadius: BorderRadius.circular(2))),
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Row(children: [
+                Expanded(child: Text('Elegir portada', style: theme.textTheme.titleLarge)),
                 if (_currentCover != null && _currentCover!.isNotEmpty)
-                  TextButton(
-                    onPressed: _removeCover,
-                    child: Text('Quitar portada',
-                        style: GoogleFonts.poppins(
-                            color: Colors.redAccent, fontSize: 12)),
-                  ),
-              ],
-            ),
-          ),
-          const SizedBox(height: 8),
-          const Divider(color: Colors.white12),
-          _loading
-              ? const Expanded(
-                  child: Center(
-                      child: CircularProgressIndicator(color: Colors.blue)))
-              : _photos.isEmpty
-                  ? Expanded(
-                      child: Center(
-                        child: Text('Sin fotos disponibles',
-                            style: GoogleFonts.poppins(
-                                color: Colors.white38)),
-                      ),
-                    )
-                  : Expanded(
+                  TextButton(onPressed: _saving ? null : () => _saveCover(''),
+                    child: const Text('Quitar portada')),
+                IconButton(tooltip: 'Cerrar', onPressed: _saving ? null : () => Navigator.pop(context),
+                  icon: const Icon(Icons.close)),
+              ])),
+            Padding(padding: const EdgeInsets.symmetric(horizontal: 16),
+              child: Align(alignment: Alignment.centerLeft,
+                child: Text('Para: $_targetName', maxLines: 1, overflow: TextOverflow.ellipsis))),
+            const SizedBox(height: 8),
+            Row(children: [
+              IconButton(tooltip: 'Regresar',
+                onPressed: _saving || _trail.isEmpty ? null
+                    : () => _navigate(_trail.take(_trail.length - 1).toList()),
+                icon: const Icon(Icons.arrow_back)),
+              IconButton(tooltip: 'Ver todas las carpetas',
+                onPressed: _saving ? null : () => _navigate([]),
+                icon: const Icon(Icons.home_outlined)),
+              Expanded(child: Text(_trail.isEmpty ? 'Home'
+                : _trail.map((folder) => folder['name']).join(' / '),
+                maxLines: 2, overflow: TextOverflow.ellipsis)),
+              const SizedBox(width: 12),
+            ]),
+            if (_saving) const LinearProgressIndicator(),
+            const Divider(height: 1),
+            Expanded(child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : _failed
+                ? Center(child: TextButton.icon(
+                    onPressed: _saving ? null : () => _trail.isEmpty && _targetName == 'carpeta'
+                      ? _initialize() : _navigate(_trail),
+                    icon: const Icon(Icons.refresh), label: const Text('No se pudo cargar. Reintentar')))
+                : _folders.isEmpty && _photos.isEmpty
+                  ? const Center(child: Padding(padding: EdgeInsets.all(24),
+                      child: Text('Esta carpeta está vacía. Regresa o toca Home para elegir otra.',
+                        textAlign: TextAlign.center)))
+                  : AbsorbPointer(absorbing: _saving,
                       child: GridView.builder(
+                        key: ValueKey(_trail.isEmpty ? 0 : _trail.last['id']),
                         padding: const EdgeInsets.all(8),
-                        gridDelegate:
-                            const SliverGridDelegateWithFixedCrossAxisCount(
-                          crossAxisCount: 3,
-                          mainAxisSpacing: 4,
-                          crossAxisSpacing: 4,
-                        ),
-                        itemCount: _photos.length,
-                        itemBuilder: (_, i) {
-                          final photo = _photos[i];
-                          final isCurrentCover = _currentCover ==
-                              photo['encrypted_path'];
-
-                          return GestureDetector(
-                            onTap: () => _selectCover(photo),
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                _PhotoThumb(photo: photo),
-                                if (isCurrentCover)
-                                  Container(
-                                    color: Colors.blue.withOpacity(0.4),
-                                    child: const Center(
-                                      child: Icon(Icons.check_circle,
-                                          color: Colors.white, size: 32),
-                                    ),
-                                  ),
-                                Positioned(
-                                  top: 4,
-                                  right: 4,
-                                  child: Container(
-                                    width: 22,
-                                    height: 22,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: isCurrentCover
-                                          ? Colors.blue
-                                          : Colors.black45,
-                                      border: Border.all(
-                                          color: Colors.white,
-                                          width: 1.5),
-                                    ),
-                                    child: isCurrentCover
-                                        ? const Icon(Icons.check,
-                                            color: Colors.white, size: 14)
-                                        : null,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          );
+                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                          crossAxisCount: 4, mainAxisSpacing: 6, crossAxisSpacing: 6,
+                          childAspectRatio: 0.85),
+                        itemCount: _folders.length + _photos.length,
+                        itemBuilder: (_, index) {
+                          if (index < _folders.length) {
+                            final folder = _folders[index];
+                            void open() => _navigate([..._trail, folder]);
+                            return FolderThumbnail(key: ValueKey('folder_${folder['id']}'),
+                              folder: folder, isSelected: false, showCount: false,
+                              onTap: open, onLongPress: null, onMenuTap: (_) => open());
+                          }
+                          final photo = _photos[index - _folders.length];
+                          return PhotoThumbnail(key: ValueKey('photo_${photo['id']}'),
+                            photo: photo, isSelected: _currentCover == photo['encrypted_path'],
+                            onTap: () => _saveCover(photo['encrypted_path'] as String));
                         },
                       ),
                     ),
-        ],
-      ),
-    );
-  }
-}
-
-class _PhotoThumb extends StatefulWidget {
-  final Map<String, dynamic> photo;
-  const _PhotoThumb({required this.photo});
-
-  @override
-  State<_PhotoThumb> createState() => _PhotoThumbState();
-}
-
-class _PhotoThumbState extends State<_PhotoThumb> {
-  Uint8List? _bytes;
-
-  bool get _isVideo {
-    final name = (widget.photo['original_name'] ?? '') as String;
-    final ext = name.split('.').last.toLowerCase();
-    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv']
-        .contains(ext);
-  }
-
-  @override
-  void initState() {
-    super.initState();
-    final path = widget.photo['encrypted_path'] as String;
-    final future = _isVideo
-        ? MediaService.instance.getVideoThumbnail(
-            path, widget.photo['original_name'] ?? 'video.mp4')
-        : MediaService.instance.getPhotoThumbnail(path);
-    future.then((b) {
-      if (mounted) setState(() => _bytes = b);
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFF2A2A2A),
-      child: Stack(
-        fit: StackFit.expand,
-        children: [
-          _bytes != null
-              ? Image.memory(
-                  _bytes!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Center(
-                      child: Icon(Icons.broken_image,
-                          color: Colors.white24, size: 24)),
-                )
-              : const Center(
-                  child: Icon(Icons.photo, color: Colors.white24, size: 24)),
-          if (_isVideo)
-            const Center(
-              child: Icon(Icons.play_circle_outline,
-                  color: Colors.white70, size: 22),
             ),
-        ],
+          ]),
+        ),
       ),
     );
   }

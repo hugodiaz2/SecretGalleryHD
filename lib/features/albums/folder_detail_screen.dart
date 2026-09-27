@@ -1,3 +1,4 @@
+import '../../core/services/gallery_order.dart';
 import '../../shared/widgets/media_drag_move.dart';
 import 'dart:io';
 import 'dart:typed_data';
@@ -47,7 +48,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   final _searchCtrl = TextEditingController();
 
   GridViewType _viewType = GridViewType.grid5;
-  String _currentSort = 'newest';
+  String _currentSort = 'manual';
   bool _narrowBorders = false;
   bool _showPhotoPreview = true;
   bool _showFolderPreview = true;
@@ -317,12 +318,8 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
       ),
     );
     if (dest == null) return;
-    for (final id in _selectedFolderIds) {
-      await _db.updateFolder(id, {
-        'parent_id': dest['is_root'] == true ? null : dest['id'],
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      });
-    }
+    await _db.moveFolders(_selectedFolderIds.toList(),
+        dest['is_root'] == true ? null : dest['id'] as int);
     setState(() {
       _selectingFolders = false;
       _selectedFolderIds.clear();
@@ -559,6 +556,17 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
   Future<void> _applySort(String v) async {
     _currentSort = v;
 
+    if (v == 'manual') {
+      if (!mounted) return;
+      final ordered = galleryItems(_filteredSubFolders, _filteredPhotos, manual: true);
+      setState(() {
+        _filteredSubFolders = ordered.where((item) => item['type'] == 'folder')
+            .map((item) => item['data'] as Map<String, dynamic>).toList();
+        _filteredPhotos = ordered.where((item) => item['type'] == 'photo')
+            .map((item) => item['data'] as Map<String, dynamic>).toList();
+      });
+      return;
+    }
     if (v == 'size_desc') {
       final folderSizes = <int, int>{};
       for (final f in _filteredSubFolders) {
@@ -587,9 +595,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
     setState(() {
       if (v == 'az') {
         _filteredSubFolders.sort((a, b) =>
-            (a['name'] as String).compareTo(b['name'] as String));
+            compareGalleryNames(a['name'] as String, b['name'] as String));
         _filteredPhotos.sort((a, b) =>
-            (a['original_name'] ?? '').compareTo(b['original_name'] ?? ''));
+            compareGalleryNames(a['original_name'] ?? '', b['original_name'] ?? ''));
       } else if (v == 'za') {
         _filteredSubFolders.sort((a, b) =>
             (b['name'] as String).compareTo(a['name'] as String));
@@ -813,9 +821,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
               )
             : Container(
                 color: context.colors.bg,
-                child: _viewType == GridViewType.list
-                    ? _buildListView()
-                    : _buildGridView(),
+                child: Column(children: [
+                  Expanded(child: _viewType == GridViewType.list
+                    ? _buildListView() : _buildGridView()),
+                ]),
               ),
 
         floatingActionButton: _isSelecting
@@ -908,53 +917,108 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
   // ── GRID VIEW ────────────────────────────────────────────
   bool _movingByDrag = false;
+  List<Map<String, dynamic>>? _pendingOrder;
+  bool get _manualOrder => _currentSort == 'manual';
+  List<Map<String, dynamic>> _galleryItems() =>
+      _pendingOrder ?? galleryItems(_filteredSubFolders, _filteredPhotos, manual: _manualOrder);
 
-  Widget _dragPhoto(Map<String, dynamic> photo, {required Widget child}) =>
-      SelectedMediaDrag(
-        key: ValueKey('drag_${photo['id']}'),
-        enabled: !_movingByDrag && !_selectingFolders &&
-            _selectedPhotoIds.contains(photo['id']),
-        ids: _selectedPhotoIds,
-        photo: photo,
-        showPreview: _showPhotoPreview,
-        child: child,
-      );
+  Widget _dragPhoto(Map<String, dynamic> photo, {required Widget child}) {
+    final selected = _selectedPhotoIds.contains(photo['id']);
+    final drag = SelectedMediaDrag(
+      enabled: !_movingByDrag && !_selectingFolders && _search.isEmpty,
+      onSelect: () {
+        if (!mounted) return;
+        setState(() {
+          _selectingFolders = false;
+          _selectedFolderIds.clear();
+          _selectingPhotos = true;
+          _selectedPhotoIds.add(photo['id'] as int);
+        });
+      },
+      ids: selected ? _selectedPhotoIds : [photo['id'] as int],
+      photo: photo, showPreview: _showPhotoPreview, child: child);
+    return MediaFolderDrop(
+      key: ValueKey('photo_${photo['id']}'),
+      enabled: !_movingByDrag && _search.isEmpty,
+      canAccept: (selection) => selection.folders || !selection.ids.contains(photo['id']),
+      onDrop: (_) {},
+      onReorder: (selection, after) => _reorderDragged(selection, 'photo:${photo['id']}', after),
+      child: drag);
+  }
 
-  Widget _dropFolder(Map<String, dynamic> folder, {required Widget child}) =>
-      MediaFolderDrop(
-        key: ValueKey('drop_${folder['id']}'),
-        enabled: !_movingByDrag && !_selectingFolders,
-        onDrop: (selection) => _moveDraggedPhotos(selection, folder['id'] as int),
-        child: child,
-      );
+  Widget _dropFolder(Map<String, dynamic> folder, {required Widget child}) {
+    final selected = _selectedFolderIds.contains(folder['id']);
+    return MediaFolderDrop(
+      key: ValueKey('folder_${folder['id']}'),
+      enabled: !_movingByDrag && _search.isEmpty,
+      canAccept: (selection) => !selection.folders || !selection.ids.contains(folder['id']),
+      onDrop: (selection) => _moveDraggedPhotos(selection, folder['id'] as int),
+      moveIntoCenter: true,
+      onReorder: (selection, after) => _reorderDragged(selection, 'folder:${folder['id']}', after),
+      child: SelectedMediaDrag(
+        isFolder: true,
+        enabled: !_movingByDrag && !_selectingPhotos && _search.isEmpty,
+        onSelect: () {
+          if (!mounted) return;
+          setState(() {
+            _selectingPhotos = false;
+            _selectedPhotoIds.clear();
+            _selectingFolders = true;
+            _selectedFolderIds.add(folder['id'] as int);
+          });
+        },
+        ids: selected ? _selectedFolderIds : [folder['id'] as int],
+        photo: folder, showPreview: _showFolderPreview, child: child));
+  }
 
+  Future<void> _reorderDragged(MediaDragSelection selection, String target, bool after) async {
+    if (_movingByDrag || !mounted || _search.isNotEmpty) return;
+    setState(() => _movingByDrag = true);
+    try {
+      final ordered = placeGalleryItemsAtTarget(_galleryItems(), selection.ids.toSet(),
+          selection.folders, target);
+      setState(() => _pendingOrder = ordered);
+      await _db.saveGalleryOrder(widget.folder['id'] as int, ordered);
+      await PrefsService.instance.saveSort('manual');
+      if (mounted) setState(() => _currentSort = 'manual');
+      if (mounted) await _load();
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo guardar el orden. Intenta de nuevo.')));
+    } finally {
+      if (mounted) setState(() { _movingByDrag = false; _pendingOrder = null; });
+    }
+  }
   Future<void> _moveDraggedPhotos(MediaDragSelection selection, int folderId) async {
     if (_movingByDrag || !mounted) return;
     setState(() => _movingByDrag = true);
     try {
-      await _db.movePhotos(selection.ids, folderId);
+      if (selection.folders) {
+        await _db.moveFolders(selection.ids, folderId);
+      } else {
+        await _db.movePhotos(selection.ids, folderId);
+      }
       if (!mounted) return;
       setState(() {
-        _selectedPhotoIds.removeAll(selection.ids);
+        if (selection.folders) _selectedFolderIds.removeAll(selection.ids);
+        _selectingFolders = _selectedFolderIds.isNotEmpty;
+        if (!selection.folders) _selectedPhotoIds.removeAll(selection.ids);
         _selectingPhotos = _selectedPhotoIds.isNotEmpty;
       });
       await _load();
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudieron mover los archivos. Intenta de nuevo.')),
+          const SnackBar(content: Text('No se pudo mover la selección. Revisa que el destino no sea una subcarpeta de la selección.')),
         );
       }
     } finally {
-      if (mounted) setState(() => _movingByDrag = false);
+      if (mounted) setState(() { _movingByDrag = false; _pendingOrder = null; });
     }
   }
   Widget _buildGridView() {
     final spacing = _narrowBorders ? 1.0 : 2.0;
-    final allItems = [
-      ...(_filteredSubFolders.map((f) => {'type': 'folder', 'data': f})),
-      ...(_filteredPhotos.map((p) => {'type': 'photo', 'data': p})),
-    ];
+    final allItems = _galleryItems();
 
     return GridView.builder(
       padding: EdgeInsets.fromLTRB(
@@ -995,8 +1059,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                 ).then((_) => _load());
               }
             },
-            onLongPress: () {
+            onLongPress: _search.isEmpty && !_selectingPhotos ? null : () {
               setState(() {
+                _selectingPhotos = false;
+                _selectedPhotoIds.clear();
                 _selectingFolders = true;
                 _selectedFolderIds.add(id);
               });
@@ -1041,8 +1107,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
               }
             }
           },
-          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
+          onLongPress: _search.isEmpty && !_selectingFolders ? null : () {
             setState(() {
+              _selectingFolders = false;
+              _selectedFolderIds.clear();
               _selectingPhotos = true;
               _selectedPhotoIds.add(id);
             });
@@ -1054,10 +1122,7 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
 
   // ── LIST VIEW ────────────────────────────────────────────
   Widget _buildListView() {
-    final allItems = [
-      ...(_filteredSubFolders.map((f) => {'type': 'folder', 'data': f})),
-      ...(_filteredPhotos.map((p) => {'type': 'photo', 'data': p})),
-    ];
+    final allItems = _galleryItems();
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 100),
@@ -1092,8 +1157,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                 ).then((_) => _load());
               }
             },
-            onLongPress: () {
+            onLongPress: _search.isEmpty && !_selectingPhotos ? null : () {
               setState(() {
+                _selectingPhotos = false;
+                _selectedPhotoIds.clear();
                 _selectingFolders = true;
                 _selectedFolderIds.add(id);
               });
@@ -1181,8 +1248,10 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
               }
             }
           },
-          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
+          onLongPress: _search.isEmpty && !_selectingFolders ? null : () {
             setState(() {
+              _selectingFolders = false;
+              _selectedFolderIds.clear();
               _selectingPhotos = true;
               _selectedPhotoIds.add(id);
             });

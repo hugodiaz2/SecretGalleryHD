@@ -1,3 +1,4 @@
+import '../../core/services/gallery_order.dart';
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -90,9 +91,7 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
           (query.isEmpty ||
               (folder['name'] as String).toLowerCase().contains(query));
     }).toList()
-      ..sort((a, b) => (a['name'] as String)
-          .toLowerCase()
-          .compareTo((b['name'] as String).toLowerCase()));
+      ..sort((a, b) => compareGalleryNames(a['name'] as String, b['name'] as String));
   }
 
   String _path(int? id) {
@@ -263,10 +262,7 @@ class _FolderTreeSheetState extends State<FolderTreeSheet> {
                                     ))
                                   : LayoutBuilder(
                                       builder: (context, gridConstraints) {
-                                      final columns =
-                                          ((gridConstraints.maxWidth - 24) / 64)
-                                              .floor()
-                                              .clamp(2, 6);
+                                      const columns = 4;
                                       final width = (gridConstraints.maxWidth -
                                               24 -
                                               (columns - 1) * 8) /

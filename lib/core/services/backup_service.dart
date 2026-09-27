@@ -225,7 +225,7 @@ class BackupService {
           await openDatabase(stagedDb.path, singleInstance: false);
       try {
         final version = await candidate.getVersion();
-        if (version < 1 || version > 5)
+        if (version < 1 || version > 6)
           throw const FormatException('Versión de respaldo no compatible');
         final check = await candidate.rawQuery('PRAGMA quick_check');
         if (check.length != 1 || check.first.values.first != 'ok')

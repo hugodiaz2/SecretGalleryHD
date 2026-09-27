@@ -1,3 +1,4 @@
+import '../../core/services/gallery_order.dart';
 import '../../shared/widgets/media_drag_move.dart';
 import 'dart:io';
 import 'dart:typed_data';
@@ -34,7 +35,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   String _search = '';
   bool _showSearch = false;
   GridViewType _viewType = GridViewType.grid5;
-  String _currentSort = 'newest';
+  String _currentSort = 'manual';
   final _searchCtrl = TextEditingController();
 
   bool _selectingFolders = false;
@@ -246,12 +247,8 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       ),
     );
     if (dest == null) return;
-    for (final id in _selectedFolderIds) {
-      await _db.updateFolder(id, {
-        'parent_id': dest['is_root'] == true ? null : dest['id'],
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      });
-    }
+    await _db.moveFolders(_selectedFolderIds.toList(),
+        dest['is_root'] == true ? null : dest['id'] as int);
     setState(() {
       _selectingFolders = false;
       _selectedFolderIds.clear();
@@ -471,6 +468,17 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
   Future<void> _applySort(String v) async {
     _currentSort = v;
 
+    if (v == 'manual') {
+      if (!mounted) return;
+      final ordered = galleryItems(_folders, _photos, manual: true);
+      setState(() {
+        _folders = ordered.where((item) => item['type'] == 'folder')
+            .map((item) => item['data'] as Map<String, dynamic>).toList();
+        _photos = ordered.where((item) => item['type'] == 'photo')
+            .map((item) => item['data'] as Map<String, dynamic>).toList();
+      });
+      return;
+    }
     if (v == 'size_desc') {
       final folderSizes = <int, int>{};
       for (final f in _folders) {
@@ -498,15 +506,19 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
 
     setState(() {
       if (v == 'az') {
+        _photos.sort((a, b) => compareGalleryNames(a['original_name'] ?? '', b['original_name'] ?? ''));
         _folders.sort((a, b) =>
-            (a['name'] as String).compareTo(b['name'] as String));
+            compareGalleryNames(a['name'] as String, b['name'] as String));
       } else if (v == 'za') {
+        _photos.sort((a, b) => (b['original_name'] ?? '').compareTo(a['original_name'] ?? ''));
         _folders.sort((a, b) =>
             (b['name'] as String).compareTo(a['name'] as String));
       } else if (v == 'newest') {
+        _photos.sort((a, b) => (b['date_added'] as int).compareTo(a['date_added'] as int));
         _folders.sort((a, b) =>
             (b['created_at'] as int).compareTo(a['created_at'] as int));
       } else if (v == 'oldest') {
+        _photos.sort((a, b) => (a['date_added'] as int).compareTo(b['date_added'] as int));
         _folders.sort((a, b) =>
             (a['created_at'] as int).compareTo(b['created_at'] as int));
       }
@@ -564,50 +576,109 @@ void _showDesignSheet() {
   }
 
   bool _movingByDrag = false;
+  List<Map<String, dynamic>>? _pendingOrder;
+  bool get _manualOrder => _currentSort == 'manual';
+  List<Map<String, dynamic>> _galleryItems() =>
+      _pendingOrder ?? galleryItems(_folders, _photos, manual: _manualOrder);
 
-  Widget _dragPhoto(Map<String, dynamic> photo, {required Widget child}) =>
-      SelectedMediaDrag(
-        key: ValueKey('drag_${photo['id']}'),
-        enabled: !_movingByDrag && !_selectingFolders &&
-            _selectedPhotoIds.contains(photo['id']),
-        ids: _selectedPhotoIds,
-        photo: photo,
-        showPreview: _showPhotoPreview,
-        child: child,
-      );
+  Widget _dragPhoto(Map<String, dynamic> photo, {required Widget child}) {
+    final selected = _selectedPhotoIds.contains(photo['id']);
+    final drag = SelectedMediaDrag(
+      enabled: !_movingByDrag && !_selectingFolders && _search.isEmpty,
+      onSelect: () {
+        if (!mounted) return;
+        setState(() {
+          _selectingFolders = false;
+          _selectedFolderIds.clear();
+          _selectingPhotos = true;
+          _selectedPhotoIds.add(photo['id'] as int);
+        });
+      },
+      ids: selected ? _selectedPhotoIds : [photo['id'] as int],
+      photo: photo, showPreview: _showPhotoPreview, child: child);
+    return MediaFolderDrop(
+      key: ValueKey('photo_${photo['id']}'),
+      enabled: !_movingByDrag && _search.isEmpty,
+      canAccept: (selection) => selection.folders || !selection.ids.contains(photo['id']),
+      onDrop: (_) {},
+      onReorder: (selection, after) => _reorderDragged(selection, 'photo:${photo['id']}', after),
+      child: drag);
+  }
 
-  Widget _dropFolder(Map<String, dynamic> folder, {required Widget child}) =>
-      MediaFolderDrop(
-        key: ValueKey('drop_${folder['id']}'),
-        enabled: !_movingByDrag && !_selectingFolders,
-        onDrop: (selection) => _moveDraggedPhotos(selection, folder['id'] as int),
-        child: child,
-      );
+  Widget _dropFolder(Map<String, dynamic> folder, {required Widget child}) {
+    final selected = _selectedFolderIds.contains(folder['id']);
+    return MediaFolderDrop(
+      key: ValueKey('folder_${folder['id']}'),
+      enabled: !_movingByDrag && _search.isEmpty,
+      canAccept: (selection) => !selection.folders || !selection.ids.contains(folder['id']),
+      onDrop: (selection) => _moveDraggedPhotos(selection, folder['id'] as int),
+      moveIntoCenter: true,
+      onReorder: (selection, after) => _reorderDragged(selection, 'folder:${folder['id']}', after),
+      child: SelectedMediaDrag(
+        isFolder: true,
+        enabled: !_movingByDrag && !_selectingPhotos && _search.isEmpty,
+        onSelect: () {
+          if (!mounted) return;
+          setState(() {
+            _selectingPhotos = false;
+            _selectedPhotoIds.clear();
+            _selectingFolders = true;
+            _selectedFolderIds.add(folder['id'] as int);
+          });
+        },
+        ids: selected ? _selectedFolderIds : [folder['id'] as int],
+        photo: folder, showPreview: _showFolderPreview, child: child));
+  }
 
+  Future<void> _reorderDragged(MediaDragSelection selection, String target, bool after) async {
+    if (_movingByDrag || !mounted || _search.isNotEmpty) return;
+    setState(() => _movingByDrag = true);
+    try {
+      final ordered = placeGalleryItemsAtTarget(_galleryItems(), selection.ids.toSet(),
+          selection.folders, target);
+      setState(() => _pendingOrder = ordered);
+      await _db.saveGalleryOrder(0, ordered);
+      await PrefsService.instance.saveSort('manual');
+      if (mounted) setState(() => _currentSort = 'manual');
+      if (mounted) await _load();
+    } catch (_) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo guardar el orden. Intenta de nuevo.')));
+    } finally {
+      if (mounted) setState(() { _movingByDrag = false; _pendingOrder = null; });
+    }
+  }
   Future<void> _moveDraggedPhotos(MediaDragSelection selection, int folderId) async {
     if (_movingByDrag || !mounted) return;
     setState(() => _movingByDrag = true);
     try {
-      await _db.movePhotos(selection.ids, folderId);
+      if (selection.folders) {
+        await _db.moveFolders(selection.ids, folderId);
+      } else {
+        await _db.movePhotos(selection.ids, folderId);
+      }
       if (!mounted) return;
       setState(() {
-        _selectedPhotoIds.removeAll(selection.ids);
+        if (selection.folders) _selectedFolderIds.removeAll(selection.ids);
+        _selectingFolders = _selectedFolderIds.isNotEmpty;
+        if (!selection.folders) _selectedPhotoIds.removeAll(selection.ids);
         _selectingPhotos = _selectedPhotoIds.isNotEmpty;
       });
       await _load();
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No se pudieron mover los archivos. Intenta de nuevo.')),
+          const SnackBar(content: Text('No se pudo mover la selección. Revisa que el destino no sea una subcarpeta de la selección.')),
         );
       }
     } finally {
-      if (mounted) setState(() => _movingByDrag = false);
+      if (mounted) setState(() { _movingByDrag = false; _pendingOrder = null; });
     }
   }
   Widget _buildGridView() {
     final spacing = _narrowBorders ? 1.0 : 2.0;
     final padding = _narrowBorders ? 1.0 : 2.0;
+    final allItems = _galleryItems();
 
     return GridView.builder(
       padding: EdgeInsets.fromLTRB(padding, padding, padding, 100),
@@ -617,14 +688,16 @@ void _showDesignSheet() {
         crossAxisSpacing: spacing,
         childAspectRatio: 0.72,
       ),
-      itemCount: _folders.length + _photos.length,
+      itemCount: allItems.length,
       itemBuilder: (ctx, i) {
-        if (i < _folders.length) {
-          final folder = _folders[i];
+        final item = allItems[i];
+        if (item['type'] == 'folder') {
+          final folder = item['data'] as Map<String, dynamic>;
           final id = folder['id'] as int;
           return _dropFolder(folder, child: FolderThumbnail(
             key: ValueKey('folder_$id'),
             folder: folder,
+            showCount: false,
             isSelected: _selectedFolderIds.contains(id),
             showPreview: _showFolderPreview,
             onTap: () {
@@ -640,8 +713,10 @@ void _showDesignSheet() {
                 ).then((_) => _load());
               }
             },
-            onLongPress: () {
+            onLongPress: _search.isEmpty && !_selectingPhotos ? null : () {
               setState(() {
+                _selectingPhotos = false;
+                _selectedPhotoIds.clear();
                 _selectingFolders = true;
                 _selectedFolderIds.add(id);
               });
@@ -650,7 +725,7 @@ void _showDesignSheet() {
           ));
         }
 
-        final photo = _photos[i - _folders.length];
+        final photo = item['data'] as Map<String, dynamic>;
         final photoId = photo['id'] as int;
 
         return _dragPhoto(photo, child: PhotoThumbnail(
@@ -689,8 +764,10 @@ void _showDesignSheet() {
               }
             }
           },
-          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
+          onLongPress: _search.isEmpty && !_selectingFolders ? null : () {
             setState(() {
+              _selectingFolders = false;
+              _selectedFolderIds.clear();
               _selectingPhotos = true;
               _selectedPhotoIds.add(photoId);
             });
@@ -701,10 +778,7 @@ void _showDesignSheet() {
   }
 
   Widget _buildListView() {
-    final allItems = [
-      ...(_folders.map((f) => {'type': 'folder', 'data': f})),
-      ...(_photos.map((p) => {'type': 'photo', 'data': p})),
-    ];
+    final allItems = _galleryItems();
 
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(0, 4, 0, 100),
@@ -715,7 +789,6 @@ void _showDesignSheet() {
           final folder = item['data'] as Map<String, dynamic>;
           final id = folder['id'] as int;
           final isSelected = _selectedFolderIds.contains(id);
-          final count = (folder['total_count'] as int?) ?? 0;
           final subs = (folder['sub_count'] as int?) ?? 0;
 
           return _dropFolder(folder, child: ListTile(
@@ -734,8 +807,10 @@ void _showDesignSheet() {
                 ).then((_) => _load());
               }
             },
-            onLongPress: () {
+            onLongPress: _search.isEmpty && !_selectingPhotos ? null : () {
               setState(() {
+                _selectingPhotos = false;
+                _selectedPhotoIds.clear();
                 _selectingFolders = true;
                 _selectedFolderIds.add(id);
               });
@@ -772,11 +847,6 @@ void _showDesignSheet() {
                     color: context.colors.textPrimary,
                     fontSize: 13,
                     fontWeight: FontWeight.w500)),
-            subtitle: Text(
-              '$count foto${count == 1 ? '' : 's'}',
-              style: GoogleFonts.poppins(
-                  color: context.colors.textMuted, fontSize: 11),
-            ),
             trailing: GestureDetector(
               onTapDown: (d) =>
                   _showFolderMenu(folder, d.globalPosition),
@@ -825,8 +895,10 @@ void _showDesignSheet() {
               }
             }
           },
-          onLongPress: _selectedPhotoIds.contains(photo['id']) && !_selectingFolders ? null : () {
+          onLongPress: _search.isEmpty && !_selectingFolders ? null : () {
             setState(() {
+              _selectingFolders = false;
+              _selectedFolderIds.clear();
               _selectingPhotos = true;
               _selectedPhotoIds.add(photoId);
             });
@@ -1082,9 +1154,10 @@ void _showDesignSheet() {
                 decoration: BoxDecoration(
                   color: context.colors.bg,
                 ),
-                child: _viewType == GridViewType.list
-                    ? _buildListView()
-                    : _buildGridView(),
+                child: Column(children: [
+                  Expanded(child: _viewType == GridViewType.list
+                    ? _buildListView() : _buildGridView()),
+                ]),
               ),
         floatingActionButton: _isSelecting
             ? null

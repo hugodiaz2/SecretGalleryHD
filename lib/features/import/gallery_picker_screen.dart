@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:photo_manager/photo_manager.dart';
@@ -31,6 +32,100 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
   final Map<String, Future<Widget>> _thumbCache = {};
   final Map<String, Future<Widget>> _albumThumbCache = {};
 
+  final _assetScroll = ScrollController();
+  final _assetGridKey = GlobalKey();
+  Timer? _sweepTimer;
+  Offset? _sweepPointer;
+  int? _sweepAnchor;
+  int? _sweepLast;
+  bool _sweepAdds = true;
+  Set<String> _beforeSweep = {};
+
+  int? _assetAt(Offset global) {
+    if (!_assetScroll.hasClients || _assets.isEmpty) return null;
+    final box = _assetGridKey.currentContext?.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return null;
+    final local = box.globalToLocal(global);
+    final cell = (box.size.width - 4 - 8) / 5;
+    if (cell <= 0) return null;
+    final x = local.dx.clamp(2.0, box.size.width - 2.0) - 2;
+    final y = local.dy.clamp(0.0, box.size.height - 1.0) + _assetScroll.offset - 2;
+    final column = (x / (cell + 2)).floor().clamp(0, 4).toInt();
+    final row = (y / (cell + 2)).floor();
+    return (row * 5 + column).clamp(0, _assets.length - 1).toInt();
+  }
+
+  void _startSweep(Offset global) {
+    if (_importing || _loadingAssets) return;
+    _endSweep();
+    final anchor = _assetAt(global);
+    if (anchor == null) return;
+    _sweepAnchor = anchor;
+    _sweepPointer = global;
+    _beforeSweep = Set.of(_selectedIds);
+    _sweepAdds = !_beforeSweep.contains(_assets[anchor].id);
+    _extendSweep(anchor);
+    _sweepTimer = Timer.periodic(const Duration(milliseconds: 16), (_) {
+      if (!mounted || _importing || _currentAlbum == null) { _endSweep(); return; }
+      final pointer = _sweepPointer;
+      final box = _assetGridKey.currentContext?.findRenderObject();
+      if (pointer == null || box is! RenderBox || !box.hasSize || !_assetScroll.hasClients) return;
+      final y = box.globalToLocal(pointer).dy;
+      final speed = y < 64 ? -10.0 : (y > box.size.height - 64 ? 10.0 : 0.0);
+      if (speed != 0 && _assetScroll.position.hasContentDimensions) {
+        final next = (_assetScroll.offset + speed).clamp(
+          _assetScroll.position.minScrollExtent, _assetScroll.position.maxScrollExtent);
+        if (next != _assetScroll.offset) _assetScroll.jumpTo(next);
+        final index = _assetAt(pointer);
+        if (index != null) _extendSweep(index);
+      }
+    });
+  }
+
+  void _updateSweep(Offset global) {
+    if (_sweepAnchor == null) return;
+    _sweepPointer = global;
+    final index = _assetAt(global);
+    if (index != null) _extendSweep(index);
+  }
+
+  void _extendSweep(int index) {
+    final anchor = _sweepAnchor;
+    if (anchor == null || index == _sweepLast) return;
+    final previous = _sweepLast;
+    final low = index < anchor ? index : anchor;
+    final high = index > anchor ? index : anchor;
+    final oldLow = previous == null ? anchor : (previous < anchor ? previous : anchor);
+    final oldHigh = previous == null ? anchor : (previous > anchor ? previous : anchor);
+    setState(() {
+      void apply(int from, int to, {required bool restore}) {
+        for (var i = from; i <= to; i++) {
+          final id = _assets[i].id;
+          final select = restore ? _beforeSweep.contains(id) : _sweepAdds;
+          if (select) { _selectedIds.add(id); } else { _selectedIds.remove(id); }
+        }
+      }
+      // Update only the changed edges, even in albums with thousands of items.
+      if (previous == null) {
+        apply(low, high, restore: false);
+      } else {
+        if (low < oldLow) apply(low, oldLow - 1, restore: false);
+        if (high > oldHigh) apply(oldHigh + 1, high, restore: false);
+        if (low > oldLow) apply(oldLow, low - 1, restore: true);
+        if (high < oldHigh) apply(high + 1, oldHigh, restore: true);
+      }
+      _sweepLast = index;
+    });
+  }
+
+  void _endSweep() {
+    _sweepTimer?.cancel();
+    _sweepTimer = null;
+    _sweepAnchor = null;
+    _sweepLast = null;
+    _sweepPointer = null;
+    _beforeSweep = {};
+  }
   bool _importing = false;
   int _importCurrent = 0;
   int _importTotal = 0;
@@ -59,6 +154,8 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
 
   @override
   void dispose() {
+    _endSweep();
+    _assetScroll.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -70,6 +167,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
   }
 
   Future<void> _loadAlbums() async {
+    _endSweep();
     final generation = ++_loadGeneration;
     try {
       final ok = await _media.requestPermission();
@@ -96,6 +194,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
   }
 
   Future<void> _openAlbum(AssetPathEntity album) async {
+    _endSweep();
     final generation = ++_loadGeneration;
     setState(() {
       _currentAlbum = album;
@@ -135,6 +234,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
   }
 
   Future<void> _import() async {
+    _endSweep();
     if (_importing || _selectedIds.isEmpty) return;
     final selected = _selectedIds
         .map((id) => _assetMap[id])
@@ -252,6 +352,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
       onWillPop: () async {
         if (_currentAlbum != null) {
           setState(() {
+            _endSweep();
             ++_loadGeneration;
             _currentAlbum = null;
             _assets = [];
@@ -271,7 +372,8 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
             onPressed: () {
               if (_currentAlbum != null) {
                 setState(() {
-                  ++_loadGeneration;
+                  _endSweep();
+            ++_loadGeneration;
                   _currentAlbum = null;
                   _assets = [];
                   _selectedIds.clear();
@@ -478,7 +580,16 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
       );
     }
 
-    return GridView.builder(
+    return GestureDetector(
+      key: _assetGridKey,
+      behavior: HitTestBehavior.opaque,
+      onLongPressStart: (details) => _startSweep(details.globalPosition),
+      onLongPressMoveUpdate: (details) => _updateSweep(details.globalPosition),
+      onLongPressEnd: (_) => _endSweep(),
+      onLongPressCancel: _endSweep,
+      child: GridView.builder(
+      key: ValueKey(_currentAlbum?.id),
+      controller: _assetScroll,
       padding: const EdgeInsets.all(2),
       cacheExtent: 400,
       gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -563,7 +674,7 @@ class _GalleryPickerScreenState extends State<GalleryPickerScreen>
           ),
         );
       },
-    );
+    ));
   }
 
   String _formatDuration(Duration duration) {

@@ -1,3 +1,4 @@
+import '../services/gallery_order.dart';
 import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
@@ -18,7 +19,7 @@ class DBHelper implements TransferRepository {
   Future<Database> _initDB() async {
     final path = join(await getDatabasesPath(), dbFileName);
     return await openDatabase(path,
-        version: 5, onCreate: _onCreate, onUpgrade: _onUpgrade);
+        version: 6, onCreate: _onCreate, onUpgrade: _onUpgrade);
   }
 
   /// Cierra la conexión activa y limpia la instancia en caché. Se usa al
@@ -30,6 +31,12 @@ class DBHelper implements TransferRepository {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 6) {
+      await db.execute('ALTER TABLE photos ADD COLUMN manual_order INTEGER');
+      await db.execute('ALTER TABLE folders ADD COLUMN manual_order INTEGER');
+      await db.execute('CREATE INDEX IF NOT EXISTS photos_folder ON photos(folder_id)');
+      await db.execute('CREATE INDEX IF NOT EXISTS folders_parent ON folders(parent_id)');
+    }
     if (oldVersion < 5) {
       await db.execute('ALTER TABLE trash ADD COLUMN photo_payload TEXT');
     }
@@ -61,6 +68,7 @@ class DBHelper implements TransferRepository {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL,
         parent_id INTEGER,
+        manual_order INTEGER,
         cover_photo_path TEXT,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
@@ -72,6 +80,7 @@ class DBHelper implements TransferRepository {
       CREATE TABLE photos (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         folder_id INTEGER NOT NULL,
+        manual_order INTEGER,
         original_name TEXT,
         encrypted_path TEXT NOT NULL,
         original_path TEXT,
@@ -83,6 +92,8 @@ class DBHelper implements TransferRepository {
       )
     ''');
 
+    await db.execute('CREATE INDEX photos_folder ON photos(folder_id)');
+    await db.execute('CREATE INDEX folders_parent ON folders(parent_id)');
     await db.execute(
         'CREATE INDEX photos_source ON photos(source_asset_id, source_digest)');
 
@@ -333,7 +344,7 @@ class DBHelper implements TransferRepository {
 
   Future<int> movePhoto(int photoId, int newFolderId) async {
     final db = await database;
-    return await db.update('photos', {'folder_id': newFolderId},
+    return await db.update('photos', {'folder_id': newFolderId, 'manual_order': null},
         where: 'id = ?', whereArgs: [photoId]);
   }
 
@@ -347,7 +358,7 @@ class DBHelper implements TransferRepository {
       }
       int count = 0;
       for (final id in photoIds.toSet()) {
-        final updated = await txn.update('photos', {'folder_id': newFolderId},
+        final updated = await txn.update('photos', {'folder_id': newFolderId, 'manual_order': null},
             where: 'id = ?', whereArgs: [id]);
         if (updated != 1) throw StateError('Un archivo seleccionado ya no existe.');
         count += updated;
@@ -377,17 +388,47 @@ class DBHelper implements TransferRepository {
     return count;
   }
 
-  Future<void> moveFolder(int folderId, int? newParentId) async {
+  Future<void> moveFolder(int folderId, int? newParentId) =>
+      moveFolders([folderId], newParentId);
+
+  Future<void> moveFolders(List<int> folderIds, int? newParentId) async {
+    final ids = folderIds.toSet();
     final db = await database;
-    await db.update(
-      'folders',
-      {
-        'parent_id': newParentId,
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      },
-      where: 'id = ?',
-      whereArgs: [folderId],
-    );
+    await db.transaction((txn) async {
+      await validateFolderDestination(ids, newParentId, (ancestor) async {
+        final rows = await txn.query('folders', columns: ['parent_id'],
+            where: 'id = ?', whereArgs: [ancestor], limit: 1);
+        if (rows.isEmpty) throw StateError('La carpeta de destino ya no existe.');
+        return rows.first['parent_id'] as int?;
+      });
+      for (final id in ids) {
+        final updated = await txn.update('folders', {
+          'parent_id': newParentId, 'manual_order': null,
+          'updated_at': DateTime.now().millisecondsSinceEpoch,
+        }, where: 'id = ?', whereArgs: [id]);
+        if (updated != 1) throw StateError('La carpeta seleccionada ya no existe.');
+      }
+    });
+  }
+
+  Future<void> saveGalleryOrder(int parentId, List<Map<String, dynamic>> items) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      final batch = txn.batch();
+      for (var index = 0; index < items.length; index++) {
+        final item = items[index];
+        final data = item['data'] as Map<String, dynamic>;
+        if (data['manual_order'] == index) continue;
+        final folder = item['type'] == 'folder';
+        final parentClause = folder
+            ? (parentId == 0 ? 'parent_id IS NULL' : 'parent_id = ?')
+            : 'folder_id = ?';
+        batch.update(folder ? 'folders' : 'photos', {'manual_order': index},
+          where: 'id = ? AND $parentClause',
+          whereArgs: [data['id'], if (!folder || parentId != 0) parentId]);
+      }
+      await batch.commit(noResult: true);
+    });
   }
 
   /// Fotos de la pantalla principal (folder_id = 0)

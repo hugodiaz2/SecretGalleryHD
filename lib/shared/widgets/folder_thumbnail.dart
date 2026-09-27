@@ -9,8 +9,9 @@ class FolderThumbnail extends StatefulWidget {
   final Map<String, dynamic> folder;
   final bool isSelected;
   final bool showPreview;
+  final bool showCount;
   final VoidCallback onTap;
-  final VoidCallback onLongPress;
+  final VoidCallback? onLongPress;
   final void Function(Offset) onMenuTap;
   final VoidCallback? onCoverChanged;
 
@@ -19,6 +20,7 @@ class FolderThumbnail extends StatefulWidget {
     required this.folder,
     required this.isSelected,
     this.showPreview = true,
+    this.showCount = true,
     required this.onTap,
     required this.onLongPress,
     required this.onMenuTap,
@@ -173,7 +175,7 @@ class _FolderThumbnailState extends State<FolderThumbnail> {
             )
           else
             placeholder(),
-          if (count > 0)
+          if (widget.showCount && count > 0)
             Positioned(
               top: 0,
               left: 0,

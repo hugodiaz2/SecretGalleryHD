@@ -127,4 +127,54 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     controller.dispose();
   });
+  testWidgets('Folder drag carries folder IDs and reorders after an item',
+      (tester) async {
+    MediaDragSelection? received;
+    bool? after;
+    await tester.pumpWidget(MaterialApp(
+        home: Scaffold(
+            body: Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        SelectedMediaDrag(
+            enabled: true,
+            isFolder: true,
+            ids: const [4, 5],
+            photo: const {'id': 4, 'name': 'Carpeta'},
+            showPreview: false,
+            child: const SizedBox(
+                key: Key('source'),
+                width: 100,
+                height: 100,
+                child: ColoredBox(color: Colors.blue))),
+        const SizedBox(width: 120),
+        MediaFolderDrop(
+            enabled: true,
+            onDrop: (_) => fail('Unexpected move into folder'),
+            onReorder: (selection, value) {
+              received = selection;
+              after = value;
+            },
+            child: const SizedBox(
+                key: Key('target'),
+                width: 100,
+                height: 100,
+                child: ColoredBox(color: Colors.green))),
+      ],
+    ))));
+    final gesture = await tester
+        .startGesture(tester.getCenter(find.byKey(const Key('source'))));
+    await tester.pump(const Duration(milliseconds: 350));
+    expect(find.text('2 carpetas'), findsOneWidget);
+    await gesture.moveTo(tester.getTopLeft(find.byKey(const Key('target'))) +
+        const Offset(50, 80));
+    await tester.pump(const Duration(milliseconds: 180));
+    expect(find.text('Colocar después'), findsOneWidget);
+    await gesture.up();
+    await tester.pumpAndSettle();
+    expect(received!.folders, isTrue);
+    expect(received!.ids, [4, 5]);
+    expect(after, isTrue);
+    expect(tester.takeException(), isNull);
+  });
 }
