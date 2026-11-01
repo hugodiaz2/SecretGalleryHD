@@ -331,7 +331,46 @@ class DBHelper implements TransferRepository {
   @override
   Future<int> insertPhoto(Map<String, dynamic> data) async {
     final db = await database;
-    return await db.insert('photos', data);
+    final folderId = data['folder_id'];
+    if (folderId is! int || data['manual_order'] != null) {
+      return await db.insert('photos', data);
+    }
+    return db.transaction((txn) async {
+      final next = await _appendPosition(txn, folderId);
+      return await txn.insert('photos', {...data, 'manual_order': next});
+    });
+  }
+
+  /// Fija el orden visible actual de una carpeta (si aún no estaba guardado)
+  /// y devuelve la posición siguiente, para que lo nuevo entre al final sin
+  /// mover lo que ya existe.
+  Future<int> _appendPosition(DatabaseExecutor txn, int folderId) async {
+    final folders = await txn.query('folders',
+        where: folderId == 0 ? 'parent_id IS NULL' : 'parent_id = ?',
+        whereArgs: folderId == 0 ? null : [folderId],
+        orderBy: 'name ASC');
+    final photos = await txn.query('photos',
+        where: 'folder_id = ?',
+        whereArgs: [folderId],
+        orderBy: 'date_added DESC');
+    final items = galleryItems(folders, photos, manual: true);
+    final unsaved = items.any((i) => i['data']['manual_order'] == null);
+    if (unsaved) {
+      final batch = txn.batch();
+      for (var i = 0; i < items.length; i++) {
+        final folder = items[i]['type'] == 'folder';
+        batch.update(folder ? 'folders' : 'photos', {'manual_order': i},
+            where: 'id = ?', whereArgs: [items[i]['data']['id']]);
+      }
+      await batch.commit(noResult: true);
+      return items.length;
+    }
+    var max = -1;
+    for (final i in items) {
+      final order = (i['data']['manual_order'] as num).toInt();
+      if (order > max) max = order;
+    }
+    return max + 1;
   }
 
   Future<List<Map<String, dynamic>>> getPhotosByFolder(int folderId) async {

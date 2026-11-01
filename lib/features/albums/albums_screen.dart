@@ -14,6 +14,7 @@ import '../../shared/widgets/unlock_helper.dart';
 import '../../shared/widgets/folder_thumbnail.dart';
 import '../../shared/widgets/design_sheet.dart';
 import '../settings/settings_screen.dart';
+import '../faces/face_suggest_screen.dart';
 import '../photos/photo_viewer_screen.dart';
 import '../photos/video_player_screen.dart';
 import 'folder_detail_screen.dart';
@@ -741,7 +742,9 @@ void _showDesignSheet() {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => VideoPlayerScreen(video: photo),
+                    builder: (_) => VideoPlayerScreen(
+                        video: photo,
+                        videos: _photos.where(_isVideo).toList()),
                   ),
                 ).then((_) => _load());
               } else {
@@ -872,7 +875,9 @@ void _showDesignSheet() {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => VideoPlayerScreen(video: photo),
+                    builder: (_) => VideoPlayerScreen(
+                        video: photo,
+                        videos: _photos.where(_isVideo).toList()),
                   ),
                 ).then((_) => _load());
               } else {
@@ -1071,6 +1076,19 @@ void _showDesignSheet() {
                     : _deleteSelectedPhotos,
               ),
             ] else ...[
+              IconButton(
+                icon: Icon(Icons.face_retouching_natural,
+                    color: context.colors.textPrimary),
+                tooltip: 'Sugerir carpetas por rostro',
+                onPressed: () {
+                  Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const FaceSuggestScreen(),
+                    ),
+                  ).then((_) => _load());
+                },
+              ),
               IconButton(
                 icon: Icon(
                     _showSearch ? Icons.close : Icons.search,

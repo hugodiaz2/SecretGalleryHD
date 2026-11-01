@@ -1,9 +1,9 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:video_player/video_player.dart';
-import 'package:chewie/chewie.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:share_plus/share_plus.dart';
@@ -14,35 +14,108 @@ import '../../core/services/lifecycle_guard.dart';
 import '../../shared/widgets/folder_tree_sheet.dart';
 import '../../shared/widgets/unlock_helper.dart';
 
+/// Reproductor de videos de una carpeta. Deslizar de lado cambia de video;
+/// solo el video visible se descifra y reproduce.
 class VideoPlayerScreen extends StatefulWidget {
   final Map<String, dynamic> video;
+  final List<Map<String, dynamic>>? videos;
 
-  const VideoPlayerScreen({super.key, required this.video});
+  const VideoPlayerScreen({super.key, required this.video, this.videos});
 
   @override
   State<VideoPlayerScreen> createState() => _VideoPlayerScreenState();
 }
 
 class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
-  VideoPlayerController? _videoController;
-  ChewieController? _chewieController;
-  bool _loading = true;
-  String? _error;
-  File? _tempFile;
-  Directory? _playbackDirectory;
+  late final List<Map<String, dynamic>> _videos;
+  late final PageController _pageController;
+  late int _index;
 
   @override
   void initState() {
     super.initState();
+    final list = widget.videos;
+    _videos = (list == null || list.isEmpty) ? [widget.video] : list;
+    final start = _videos.indexWhere(
+        (v) => v['encrypted_path'] == widget.video['encrypted_path']);
+    _index = start >= 0 ? start : 0;
+    _pageController = PageController(initialPage: _index);
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    _initVideo();
   }
 
   @override
   void dispose() {
+    _pageController.dispose();
     SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-    _chewieController?.dispose();
-    _videoController?.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.black,
+      body: PageView.builder(
+        controller: _pageController,
+        itemCount: _videos.length,
+        onPageChanged: (i) => setState(() => _index = i),
+        itemBuilder: (_, i) => _VideoPage(
+          key: ValueKey(_videos[i]['encrypted_path']),
+          video: _videos[i],
+          active: i == _index,
+          counter: _videos.length > 1 ? '${i + 1} / ${_videos.length}' : null,
+        ),
+      ),
+    );
+  }
+}
+
+class _VideoPage extends StatefulWidget {
+  final Map<String, dynamic> video;
+  final bool active;
+  final String? counter;
+
+  const _VideoPage({
+    super.key,
+    required this.video,
+    required this.active,
+    this.counter,
+  });
+
+  @override
+  State<_VideoPage> createState() => _VideoPageState();
+}
+
+class _VideoPageState extends State<_VideoPage> {
+  VideoPlayerController? _controller;
+  bool _loading = true;
+  String? _error;
+  File? _tempFile;
+  Directory? _playbackDirectory;
+  bool _showControls = true;
+  Timer? _hideTimer;
+  int _generation = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.active) _initVideo();
+  }
+
+  @override
+  void didUpdateWidget(_VideoPage old) {
+    super.didUpdateWidget(old);
+    if (widget.active && !old.active) {
+      _initVideo();
+    } else if (!widget.active && old.active) {
+      _release();
+    }
+  }
+
+  @override
+  void dispose() {
+    _hideTimer?.cancel();
+    _generation++;
+    _controller?.dispose();
     _cleanupPlayback();
     super.dispose();
   }
@@ -57,45 +130,59 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     } catch (_) {}
   }
 
+  /// Libera el reproductor y el temporal descifrado al salir de la página.
+  void _release() {
+    _generation++;
+    _hideTimer?.cancel();
+    final controller = _controller;
+    _controller = null;
+    controller?.dispose();
+    _cleanupPlayback();
+    if (mounted) {
+      setState(() {
+        _loading = true;
+        _error = null;
+        _showControls = true;
+      });
+    }
+  }
+
   Future<void> _initVideo() async {
+    final generation = ++_generation;
+    bool stale() => !mounted || generation != _generation;
+    Directory? directory;
+    VideoPlayerController? controller;
     try {
-      final directory =
-          await (await getTemporaryDirectory()).createTemp('sg_play_');
+      directory = await (await getTemporaryDirectory()).createTemp('sg_play_');
       _playbackDirectory = directory;
       final fileName =
           p.basename(widget.video['original_name'] as String? ?? 'video.mp4');
       final tempFile = File(p.join(directory.path, fileName));
       await MediaService.instance.preparePrivateVideo(
           widget.video['encrypted_path'] as String, tempFile.path);
-      if (!mounted) {
-        await _cleanupPlayback();
+      if (stale()) return;
+      _tempFile = tempFile;
+      controller = VideoPlayerController.file(tempFile);
+      await controller.initialize();
+      if (stale()) {
+        await controller.dispose();
         return;
       }
-      _tempFile = tempFile;
-      _videoController = VideoPlayerController.file(_tempFile!);
-      await _videoController!.initialize();
-      if (!mounted) return;
-
-      _chewieController = ChewieController(
-        videoPlayerController: _videoController!,
-        autoPlay: true,
-        looping: false,
-        allowFullScreen: true,
-        systemOverlaysAfterFullScreen: SystemUiOverlay.values,
-        allowMuting: true,
-        showControlsOnInitialize: true,
-        placeholder: Container(color: Colors.black),
-        // Sin ChewieProgressColors para evitar errores de versión
-      );
-
-      if (mounted) setState(() => _loading = false);
-    } catch (e) {
-      _chewieController?.dispose();
-      _chewieController = null;
-      await _videoController?.dispose();
-      _videoController = null;
-      await _cleanupPlayback();
+      _controller = controller;
+      controller.addListener(_onVideoTick);
+      await controller.play();
       if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = null;
+        });
+        _scheduleHide();
+      }
+    } catch (e) {
+      await controller?.dispose();
+      if (_controller == controller) _controller = null;
+      if (!stale()) {
+        await _cleanupPlayback();
         setState(() {
           _error = 'Error al reproducir: $e';
           _loading = false;
@@ -104,135 +191,304 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     }
   }
 
+  bool _wasPlaying = true;
+
+  void _onVideoTick() {
+    final playing = _controller?.value.isPlaying ?? false;
+    if (playing != _wasPlaying && mounted) {
+      _wasPlaying = playing;
+      // Al pausar o terminar los controles quedan visibles.
+      setState(() {});
+      if (playing) _scheduleHide();
+    }
+  }
+
+  bool get _playing => _controller?.value.isPlaying ?? false;
+  bool get _controlsVisible => _showControls || !_playing;
+
+  void _scheduleHide() {
+    _hideTimer?.cancel();
+    _hideTimer = Timer(const Duration(seconds: 3), () {
+      if (mounted && _playing) setState(() => _showControls = false);
+    });
+  }
+
+  void _toggleControls() {
+    _hideTimer?.cancel();
+    setState(() => _showControls = !_controlsVisible);
+    if (_showControls) _scheduleHide();
+  }
+
+  void _togglePlay() {
+    final c = _controller;
+    if (c == null) return;
+    if (c.value.isPlaying) {
+      c.pause();
+    } else {
+      if (c.value.position >= c.value.duration) c.seekTo(Duration.zero);
+      c.play();
+      _scheduleHide();
+    }
+    setState(() {});
+  }
+
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.black,
-      appBar: AppBar(
-        backgroundColor: Colors.black,
-        elevation: 0,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: () => Navigator.pop(context),
-        ),
-        title: Text(
-          widget.video['original_name'] ?? 'Video',
-          style: GoogleFonts.poppins(color: Colors.white, fontSize: 14),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
-      body: _loading
-          ? const Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  CircularProgressIndicator(color: Colors.blue),
-                  SizedBox(height: 16),
-                  Text(
-                    'Cargando video...',
-                    style: TextStyle(color: Colors.white54),
-                  ),
-                ],
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Positioned.fill(child: _buildVideo()),
+        if (!_loading && _error == null)
+          Positioned.fill(
+            child: IgnorePointer(
+              ignoring: !_controlsVisible,
+              child: AnimatedOpacity(
+                opacity: _controlsVisible ? 1 : 0,
+                duration: const Duration(milliseconds: 180),
+                child: _buildControls(),
               ),
-            )
-          : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      const Icon(Icons.error_outline,
-                          color: Colors.redAccent, size: 48),
-                      const SizedBox(height: 16),
-                      Text(
-                        _error!,
-                        style: GoogleFonts.poppins(
-                            color: Colors.white54, fontSize: 13),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 20),
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _loading = true;
-                            _error = null;
-                          });
-                          _initVideo();
-                        },
-                        child: Text(
-                          'Reintentar',
-                          style: GoogleFonts.poppins(color: Colors.blue),
-                        ),
-                      ),
-                    ],
-                  ),
-                )
-              : SafeArea(
-                  bottom: false,
-                  child: Chewie(controller: _chewieController!),
-                ),
-      bottomNavigationBar:
-          (!_loading && _error == null) ? _buildBottomBar() : null,
+            ),
+          )
+        else
+          // Mientras carga o falla solo queda el botón de atrás.
+          Positioned(top: 0, left: 0, child: _buildBackButton()),
+      ],
     );
   }
 
-  // ── Barra de acciones inferior ───────────────────────────
-  Widget _buildBottomBar() {
-    return Container(
-      color: Colors.black,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              _barAction(Icons.share_outlined, 'Compartir', _shareVideo),
-              _barAction(Icons.drive_file_move_outline, 'Mover', _moveVideo),
-              _barAction(Icons.lock_open_outlined, 'Desbloquear', _unlockVideo),
-              _barAction(Icons.delete_outline, 'Eliminar', _deleteVideo),
-              _barAction(Icons.info_outline, 'Información', _showInfo),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _barAction(IconData icon, String label, VoidCallback onTap) {
-    return Expanded(
-        child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
+  Widget _buildVideo() {
+    if (_error != null) {
+      return Center(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(icon, color: Colors.white, size: 23),
-            const SizedBox(height: 4),
-            Text(label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+            const Icon(Icons.error_outline, color: Colors.redAccent, size: 48),
+            const SizedBox(height: 16),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: Text(
+                _error!,
+                style: GoogleFonts.poppins(color: Colors.white54, fontSize: 13),
                 textAlign: TextAlign.center,
-                style:
-                    GoogleFonts.poppins(color: Colors.white70, fontSize: 10)),
+              ),
+            ),
+            const SizedBox(height: 20),
+            TextButton(
+              onPressed: () {
+                setState(() {
+                  _loading = true;
+                  _error = null;
+                });
+                _initVideo();
+              },
+              child: Text('Reintentar',
+                  style: GoogleFonts.poppins(color: Colors.blue)),
+            ),
           ],
         ),
+      );
+    }
+    final controller = _controller;
+    if (_loading || controller == null) {
+      return const Center(child: CircularProgressIndicator(color: Colors.white30));
+    }
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: _toggleControls,
+      child: Center(
+        child: AspectRatio(
+          aspectRatio: controller.value.aspectRatio,
+          child: VideoPlayer(controller),
+        ),
       ),
-    ));
+    );
   }
+
+  Widget _circle(Widget child) => Container(
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.55),
+          shape: BoxShape.circle,
+        ),
+        child: child,
+      );
+
+  Widget _buildBackButton() => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+          child: _circle(IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: () => Navigator.pop(context),
+          )),
+        ),
+      );
+
+  // ── Controles únicos: atrás, menú, play/pausa y avance ───
+  Widget _buildControls() {
+    final controller = _controller!;
+    return Stack(
+      children: [
+        // Los toques en zonas vacías llegan al video por debajo.
+        SafeArea(
+          bottom: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
+              children: [
+                _circle(IconButton(
+                  icon: const Icon(Icons.arrow_back, color: Colors.white),
+                  onPressed: () => Navigator.pop(context),
+                )),
+                const Spacer(),
+                if (widget.counter != null)
+                  Container(
+                    margin: const EdgeInsets.only(right: 8),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.55),
+                      borderRadius: BorderRadius.circular(28),
+                    ),
+                    child: Text(widget.counter!,
+                        style: GoogleFonts.poppins(
+                            color: Colors.white, fontSize: 13)),
+                  ),
+                _circle(_buildMenu()),
+              ],
+            ),
+          ),
+        ),
+        Center(
+          child: GestureDetector(
+            onTap: _togglePlay,
+            child: Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.black.withOpacity(0.55),
+              ),
+              child: Icon(
+                _playing ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                color: Colors.white,
+                size: 46,
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          bottom: 0,
+          child: SafeArea(
+            top: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+              child: _buildSeekBar(controller),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSeekBar(VideoPlayerController controller) {
+    return ValueListenableBuilder<VideoPlayerValue>(
+      valueListenable: controller,
+      builder: (_, value, __) {
+        final total = value.duration.inMilliseconds;
+        final position = value.position.inMilliseconds.clamp(0, total > 0 ? total : 1);
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.55),
+            borderRadius: BorderRadius.circular(28),
+          ),
+          child: Row(
+            children: [
+              Text(_formatDuration(value.position),
+                  style: GoogleFonts.poppins(color: Colors.white, fontSize: 12)),
+              Expanded(
+                child: SliderTheme(
+                  data: SliderTheme.of(context).copyWith(
+                    trackHeight: 3,
+                    thumbShape:
+                        const RoundSliderThumbShape(enabledThumbRadius: 6),
+                    overlayShape:
+                        const RoundSliderOverlayShape(overlayRadius: 14),
+                    activeTrackColor: Colors.white,
+                    inactiveTrackColor: Colors.white24,
+                    thumbColor: Colors.white,
+                  ),
+                  child: Slider(
+                    value: position.toDouble(),
+                    max: total > 0 ? total.toDouble() : 1,
+                    onChangeStart: (_) => _hideTimer?.cancel(),
+                    onChanged: (v) =>
+                        controller.seekTo(Duration(milliseconds: v.round())),
+                    onChangeEnd: (_) {
+                      if (_playing) _scheduleHide();
+                    },
+                  ),
+                ),
+              ),
+              Text(_formatDuration(value.duration),
+                  style: GoogleFonts.poppins(color: Colors.white, fontSize: 12)),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildMenu() {
+    return PopupMenuButton<String>(
+      icon: const Icon(Icons.more_vert, color: Colors.white),
+      color: const Color(0xFF1E1E1E),
+      onOpened: () => _controller?.pause(),
+      onSelected: (v) {
+        switch (v) {
+          case 'share':
+            _shareVideo();
+          case 'move':
+            _moveVideo();
+          case 'unlock':
+            _unlockVideo();
+          case 'delete':
+            _deleteVideo();
+          case 'info':
+            _showInfo();
+        }
+      },
+      itemBuilder: (_) => [
+        _menuItem('share', Icons.share_outlined, 'Compartir'),
+        _menuItem('move', Icons.drive_file_move_outline, 'Mover'),
+        _menuItem('unlock', Icons.lock_open_outlined, 'Desbloquear'),
+        _menuItem('delete', Icons.delete_outline, 'Eliminar'),
+        _menuItem('info', Icons.info_outline, 'Información'),
+      ],
+    );
+  }
+
+  PopupMenuItem<String> _menuItem(String v, IconData icon, String label) =>
+      PopupMenuItem<String>(
+        value: v,
+        child: Row(children: [
+          Icon(icon, color: Colors.white70, size: 20),
+          const SizedBox(width: 12),
+          Text(label, style: GoogleFonts.poppins(color: Colors.white)),
+        ]),
+      );
 
   // ── Compartir ─────────────────────────────────────────────
   Future<void> _shareVideo() async {
-    _videoController?.pause();
+    _controller?.pause();
     if (_tempFile == null || !mounted) return;
     await LifecycleGuard.run(() => Share.shareXFiles([XFile(_tempFile!.path)]));
   }
 
   // ── Mover a carpeta ───────────────────────────────────────
   Future<void> _moveVideo() async {
-    _videoController?.pause();
+    _controller?.pause();
     final dest = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       isScrollControlled: true,
@@ -248,7 +504,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   // ── Desbloquear ───────────────────────────────────────────
   void _unlockVideo() {
-    _videoController?.pause();
+    _controller?.pause();
     confirmUnlock(
       context,
       [widget.video],
@@ -258,7 +514,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   // ── Eliminar / papelera ───────────────────────────────────
   Future<void> _deleteVideo() async {
-    _videoController?.pause();
+    _controller?.pause();
     final noTrash = await PrefsService.instance.getNoTrash();
     if (!mounted) return;
 
@@ -303,7 +559,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
 
   // ── Información ───────────────────────────────────────────
   Future<void> _showInfo() async {
-    _videoController?.pause();
+    _controller?.pause();
     int sizeBytes = 0;
     try {
       sizeBytes = await File(widget.video['encrypted_path'] as String).length();
@@ -316,8 +572,8 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     final dateText =
         '${date.day.toString().padLeft(2, '0')}/${date.month.toString().padLeft(2, '0')}/${date.year} '
         '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    final durationText = _videoController != null
-        ? _formatDuration(_videoController!.value.duration)
+    final durationText = _controller != null
+        ? _formatDuration(_controller!.value.duration)
         : '—';
 
     if (!mounted) return;

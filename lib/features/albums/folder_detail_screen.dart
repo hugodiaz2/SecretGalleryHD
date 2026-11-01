@@ -15,6 +15,7 @@ import '../../shared/widgets/unlock_helper.dart';
 import '../../shared/widgets/cover_picker_sheet.dart';
 import '../../shared/widgets/design_sheet.dart';
 import '../import/gallery_picker_screen.dart';
+import '../faces/face_suggest_screen.dart';
 import '../photos/photo_viewer_screen.dart';
 import '../photos/video_player_screen.dart';
 
@@ -750,6 +751,20 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
             // ── Modo normal ──
             else ...[
               IconButton(
+                icon: Icon(Icons.face_retouching_natural,
+                    color: context.colors.textPrimary),
+                tooltip: 'Sugerir carpetas por rostro',
+                onPressed: () {
+                  Navigator.push<bool>(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          FaceSuggestScreen(folderId: widget.folder['id'] as int),
+                    ),
+                  ).then((_) => _load());
+                },
+              ),
+              IconButton(
                 icon: Icon(
                   _showSearch ? Icons.close : Icons.search,
                   color: context.colors.textPrimary,
@@ -1086,7 +1101,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => VideoPlayerScreen(video: photo),
+                    builder: (_) => VideoPlayerScreen(
+                        video: photo,
+                        videos: _filteredPhotos.where(_isVideo).toList()),
                   ),
                 ).then((_) => _load());
               } else {
@@ -1227,7 +1244,9 @@ class _FolderDetailScreenState extends State<FolderDetailScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => VideoPlayerScreen(video: photo),
+                    builder: (_) => VideoPlayerScreen(
+                        video: photo,
+                        videos: _filteredPhotos.where(_isVideo).toList()),
                   ),
                 ).then((_) => _load());
               } else {

@@ -75,83 +75,121 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     final currentPhoto = widget.photos[_currentIndex];
     final currentIsVideo = _isVideo(currentPhoto);
 
+    // La foto ocupa toda la pantalla desde el primer momento; los controles
+    // flotan encima y se ocultan con un toque.
     return Scaffold(
       backgroundColor: Colors.black,
-      extendBodyBehindAppBar: true,
-      appBar: _showBars
-          ? AppBar(
-              backgroundColor: Colors.black54,
-              elevation: 0,
-              leading: IconButton(
-                icon: const Icon(Icons.arrow_back, color: Colors.white),
-                onPressed: () => Navigator.pop(context),
-              ),
-              title: Row(
-                children: [
-                  if (currentIsVideo)
-                    const Padding(
-                      padding: EdgeInsets.only(right: 6),
-                      child: Icon(Icons.videocam_rounded,
-                          color: Colors.white54, size: 18),
-                    ),
-                  Text(
-                    '${_currentIndex + 1} / ${widget.photos.length}',
-                    style:
-                        GoogleFonts.poppins(color: Colors.white, fontSize: 14),
-                  ),
-                ],
-              ),
-              actions: [
-                if (currentIsVideo)
-                  IconButton(
-                    icon: const Icon(Icons.play_circle_outline,
-                        color: Colors.white),
-                    tooltip: 'Reproducir',
-                    onPressed: () => _openVideoPlayer(currentPhoto),
-                  ),
-              ],
-            )
-          : null,
-      bottomNavigationBar: _showBars ? _buildBottomBar(currentPhoto) : null,
       body: Stack(
         children: [
-          GestureDetector(
-            onTap: _toggleBars,
-            child: PageView.builder(
-              controller: _pageController,
-              itemCount: widget.photos.length,
-              onPageChanged: (i) => setState(() => _currentIndex = i),
-              itemBuilder: (_, i) {
-                final photo = widget.photos[i];
-                if (_isVideo(photo)) {
-                  return _VideoThumbPage(
-                    photo: photo,
-                    onPlayTap: () => _openVideoPlayer(photo),
-                    autoOpen: i == widget.initialIndex,
-                  );
-                }
-                return _ZoomablePhoto(photo: photo);
-              },
+          Positioned.fill(
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleBars,
+              child: PageView.builder(
+                controller: _pageController,
+                itemCount: widget.photos.length,
+                onPageChanged: (i) => setState(() => _currentIndex = i),
+                itemBuilder: (_, i) {
+                  final photo = widget.photos[i];
+                  if (_isVideo(photo)) {
+                    return _VideoThumbPage(
+                      photo: photo,
+                      onPlayTap: () => _openVideoPlayer(photo),
+                      autoOpen: i == widget.initialIndex,
+                    );
+                  }
+                  return _ZoomablePhoto(photo: photo);
+                },
+              ),
             ),
+          ),
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: _fade(_buildTopBar(currentIsVideo, currentPhoto)),
+          ),
+          Positioned(
+            bottom: 0,
+            left: 0,
+            right: 0,
+            child: _fade(_buildBottomBar(currentPhoto)),
           ),
         ],
       ),
     );
   }
 
-  // ── Barra de acciones inferior ───────────────────────────
+  Widget _fade(Widget child) => IgnorePointer(
+        ignoring: !_showBars,
+        child: AnimatedOpacity(
+          opacity: _showBars ? 1 : 0,
+          duration: const Duration(milliseconds: 180),
+          child: child,
+        ),
+      );
+
+  Widget _pill({required Widget child, EdgeInsets? padding}) => Container(
+        padding: padding,
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.55),
+          borderRadius: BorderRadius.circular(28),
+        ),
+        child: child,
+      );
+
+  // ── Barra superior flotante ──────────────────────────────
+  Widget _buildTopBar(bool isVideo, Map<String, dynamic> photo) {
+    return SafeArea(
+      bottom: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+        child: Row(
+          children: [
+            _pill(
+              child: IconButton(
+                icon: const Icon(Icons.arrow_back, color: Colors.white),
+                onPressed: () => Navigator.pop(context),
+              ),
+            ),
+            const Spacer(),
+            if (isVideo) ...[
+              _pill(
+                child: IconButton(
+                  icon: const Icon(Icons.play_arrow_rounded,
+                      color: Colors.white),
+                  tooltip: 'Reproducir',
+                  onPressed: () => _openVideoPlayer(photo),
+                ),
+              ),
+              const SizedBox(width: 8),
+            ],
+            _pill(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              child: Text(
+                '${_currentIndex + 1} / ${widget.photos.length}',
+                style: GoogleFonts.poppins(color: Colors.white, fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Barra de acciones inferior flotante ──────────────────
   Widget _buildBottomBar(Map<String, dynamic> photo) {
-    return Container(
-      color: Colors.black54,
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6),
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+        child: _pill(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
-              _barAction(
-                  Icons.share_outlined, 'Compartir', () => _sharePhoto(photo)),
+              _barAction(Icons.share_outlined, 'Compartir',
+                  () => _sharePhoto(photo)),
               _barAction(Icons.drive_file_move_outline, 'Mover',
                   () => _movePhoto(photo)),
               _barAction(Icons.lock_open_outlined, 'Desbloquear',
@@ -168,27 +206,11 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   }
 
   Widget _barAction(IconData icon, String label, VoidCallback onTap) {
-    return Expanded(
-        child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 8),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: Colors.white, size: 23),
-            const SizedBox(height: 4),
-            Text(label,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                textAlign: TextAlign.center,
-                style:
-                    GoogleFonts.poppins(color: Colors.white70, fontSize: 10)),
-          ],
-        ),
-      ),
-    ));
+    return IconButton(
+      onPressed: onTap,
+      tooltip: label,
+      icon: Icon(icon, color: Colors.white, size: 24),
+    );
   }
 
   // ── Compartir ─────────────────────────────────────────────
@@ -538,7 +560,7 @@ class _ZoomablePhotoState extends State<_ZoomablePhoto> {
         final imageAspect = _aspectRatio > 0 ? _aspectRatio : screenRatio;
 
         return InteractiveViewer(
-          minScale: 0.8,
+          minScale: 1.0,
           maxScale: 5.0,
           child: Center(
             child: AspectRatio(

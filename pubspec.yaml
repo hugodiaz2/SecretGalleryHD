@@ -54,6 +54,8 @@ dependencies:
   # Respaldo
   archive: ^3.6.1
   file_picker: ^8.1.4
+  tflite_flutter: ^0.12.1
+  google_mlkit_face_detection: ^0.14.0
 
 dev_dependencies:
   flutter_test:
@@ -65,6 +67,7 @@ flutter:
   uses-material-design: true
   assets:
     - assets/icon/
+    - assets/models/facenet.tflite
 
 flutter_launcher_icons:
   android: true
