@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import '../../core/security/attempt_limiter.dart';
 import '../../core/security/pin_service.dart';
 
 /// Disfraz de la app: una calculadora normal y funcional. Si el usuario
@@ -81,14 +82,21 @@ class _CalculatorScreenState extends State<CalculatorScreen> {
   Future<void> _equals() async {
     // Desbloqueo secreto: número recién escrito (sin operador pendiente
     // usado en esta secuencia) que coincide con el PIN real.
-    if (_pendingOp == null && _rawEntry.isNotEmpty) {
+    // Solo un número de 4 dígitos puede ser el PIN: las cuentas normales no
+    // cuentan como intentos. Durante la espera por fallos no se comprueba
+    // (la calculadora sigue funcionando sin delatar nada).
+    if (_pendingOp == null && RegExp(r'^\d{4}$').hasMatch(_rawEntry) &&
+        await AttemptLimiter.instance.remaining() == Duration.zero) {
       final valid = await _pinService.validatePin(_rawEntry);
       if (valid) {
+        await AttemptLimiter.instance.reset();
         HapticFeedback.heavyImpact();
         widget.onUnlocked();
         return;
       }
+      await AttemptLimiter.instance.recordFailure();
     }
+    if (!mounted) return;
 
     setState(() {
       if (_accumulator != null && _pendingOp != null) {

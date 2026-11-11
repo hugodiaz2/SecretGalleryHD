@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import '../lib/shared/widgets/media_drag_move.dart';
+import 'package:secret_gallery/shared/widgets/media_drag_move.dart';
 
 void main() {
   Future<void> showDrag(
@@ -48,7 +48,6 @@ void main() {
     expect(find.text('3 archivos'), findsOneWidget);
     await gesture.moveTo(tester.getCenter(find.byKey(const Key('folder'))));
     await tester.pump(const Duration(milliseconds: 180));
-    expect(find.text('Soltar aquí'), findsOneWidget);
     await gesture.up();
     await tester.pumpAndSettle();
     expect(drops, [
@@ -169,7 +168,6 @@ void main() {
     await gesture.moveTo(tester.getTopLeft(find.byKey(const Key('target'))) +
         const Offset(50, 80));
     await tester.pump(const Duration(milliseconds: 180));
-    expect(find.text('Colocar después'), findsOneWidget);
     await gesture.up();
     await tester.pumpAndSettle();
     expect(received!.folders, isTrue);

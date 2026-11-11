@@ -14,6 +14,14 @@ class TrashScreen extends StatefulWidget {
 }
 
 class _TrashScreenState extends State<TrashScreen> {
+  /// Las cargas y operaciones asíncronas pueden terminar después de que la
+  /// pantalla se cierre (por ejemplo, al bloquearse la app). Ignorar esas
+  /// actualizaciones evita el error "setState() called after dispose()".
+  @override
+  void setState(VoidCallback fn) {
+    if (mounted) super.setState(fn);
+  }
+
   final _db = DBHelper.instance;
   List<Map<String, dynamic>> _items = [];
   final Set<int> _selectedIds = {};
@@ -29,12 +37,44 @@ class _TrashScreenState extends State<TrashScreen> {
 
   Future<void> _loadPrefs() async {
     final type = await PrefsService.instance.getGridType();
-    setState(() => _viewType = type);
+    if (mounted) setState(() => _viewType = type);
   }
 
   Future<void> _load() async {
     final items = await _db.getTrashItems();
-    setState(() => _items = items);
+    if (mounted) setState(() => _items = items);
+  }
+
+  /// Ejecuta una operación de la papelera; si falla avisa en lugar de
+  /// detenerse en silencio. Devuelve cuántos elementos se procesaron.
+  Future<int> _forEachItem(List<Map<String, dynamic>> items,
+      Future<void> Function(Map<String, dynamic>) action) async {
+    var done = 0;
+    var failed = 0;
+    for (final item in items) {
+      try {
+        await action(item);
+        done++;
+      } catch (e) {
+        debugPrint('Papelera: $e');
+        failed++;
+      }
+    }
+    if (failed > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(failed == 1
+              ? 'No se pudo procesar 1 archivo. Inténtalo de nuevo.'
+              : 'No se pudieron procesar $failed archivos. Inténtalo de nuevo.')));
+    }
+    return done;
+  }
+
+  void _endSelection() {
+    if (!mounted) return;
+    setState(() {
+      _selecting = false;
+      _selectedIds.clear();
+    });
   }
 
   int get _crossAxisCount {
@@ -55,21 +95,16 @@ class _TrashScreenState extends State<TrashScreen> {
   bool _isVideo(String? name) {
     if (name == null) return false;
     final ext = name.split('.').last.toLowerCase();
-    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext);
+    return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'].contains(ext);
   }
 
   Future<void> _restoreSelected() async {
     final toRestore =
         _items.where((i) => _selectedIds.contains(i['id'])).toList();
-    for (final item in toRestore) {
-      await _db.restoreFromTrash(item);
-    }
-    setState(() {
-      _selecting = false;
-      _selectedIds.clear();
-    });
+    final restored = await _forEachItem(toRestore, _db.restoreFromTrash);
+    _endSelection();
     _load();
-    if (mounted) {
+    if (mounted && restored > 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           backgroundColor: Theme.of(context).extension<AppColors>()!.surface,
@@ -77,7 +112,7 @@ class _TrashScreenState extends State<TrashScreen> {
             const Icon(Icons.restore, color: Colors.green, size: 18),
             const SizedBox(width: 8),
             Text(
-              '${toRestore.length} archivo${toRestore.length == 1 ? '' : 's'} restaurado${toRestore.length == 1 ? '' : 's'}',
+              '$restored archivo${restored == 1 ? '' : 's'} restaurado${restored == 1 ? '' : 's'}',
               style: GoogleFonts.poppins(color: context.colors.textPrimary),
             ),
           ]),
@@ -111,17 +146,12 @@ class _TrashScreenState extends State<TrashScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
     final toDelete =
         _items.where((i) => _selectedIds.contains(i['id'])).toList();
-    for (final item in toDelete) {
-      await MediaService.instance.deleteTrashItem(item);
-    }
-    setState(() {
-      _selecting = false;
-      _selectedIds.clear();
-    });
+    await _forEachItem(toDelete, MediaService.instance.deleteTrashItem);
+    _endSelection();
     _load();
   }
 
@@ -150,12 +180,10 @@ class _TrashScreenState extends State<TrashScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
-    for (final item in _items) {
-      await MediaService.instance.deleteTrashItem(item);
-    }
-
+    await _forEachItem(
+        List.of(_items), MediaService.instance.deleteTrashItem);
     _load();
   }
 
@@ -405,9 +433,10 @@ class _TrashScreenState extends State<TrashScreen> {
                       GoogleFonts.poppins(color: context.colors.textPrimary)),
               onTap: () async {
                 Navigator.pop(context);
-                await _db.restoreFromTrash(item);
+                final restored =
+                    await _forEachItem([item], _db.restoreFromTrash);
                 _load();
-                if (mounted) {
+                if (mounted && restored > 0) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       backgroundColor:
@@ -427,7 +456,8 @@ class _TrashScreenState extends State<TrashScreen> {
                   style: GoogleFonts.poppins(color: Colors.redAccent)),
               onTap: () async {
                 Navigator.pop(context);
-                await MediaService.instance.deleteTrashItem(item);
+                await _forEachItem(
+                    [item], MediaService.instance.deleteTrashItem);
                 _load();
               },
             ),

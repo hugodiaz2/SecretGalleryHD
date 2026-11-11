@@ -29,8 +29,16 @@ class AlbumsScreen extends StatefulWidget {
 }
 
 class _AlbumsScreenState extends State<AlbumsScreen> {
+  /// Las cargas y operaciones asíncronas pueden terminar después de que la
+  /// pantalla se cierre (por ejemplo, al bloquearse la app). Ignorar esas
+  /// actualizaciones evita el error "setState() called after dispose()".
+  @override
+  void setState(VoidCallback fn) {
+    if (mounted) super.setState(fn);
+  }
+
   final _db = DBHelper.instance;
-  final _media = MediaService.instance; // ✅ AGREGADO
+  final _media = MediaService.instance;
   List<Map<String, dynamic>> _folders = [];
   List<Map<String, dynamic>> _photos = [];
   String _search = '';
@@ -151,13 +159,13 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
     );
     if (name != null && name.isNotEmpty) {
       final now = DateTime.now().millisecondsSinceEpoch;
-      await _db.insertFolder({
+      await _attempt(() => _db.insertFolder({
         'name': name,
         'parent_id': null,
         'created_at': now,
         'updated_at': now,
-      });
-      _load();
+      }));
+      if (mounted) _load();
     }
   }
 
@@ -199,11 +207,11 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       ),
     );
     if (name != null && name.isNotEmpty) {
-      await _db.updateFolder(folder['id'], {
-        'name': name,
-        'updated_at': DateTime.now().millisecondsSinceEpoch,
-      });
-      _load();
+      await _attempt(() => _db.updateFolder(folder['id'] as int, {
+            'name': name,
+            'updated_at': DateTime.now().millisecondsSinceEpoch,
+          }));
+      if (mounted) _load();
     }
   }
 
@@ -233,9 +241,36 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       ),
     );
     if (confirm == true) {
-      await _media.deleteFolder(folder['id']);
-      _load();
+      await _attempt(() => _media.deleteFolder(folder['id'] as int));
+      if (mounted) _load();
     }
+  }
+
+  /// Ejecuta una operación sobre la bóveda. Si falla avisa al usuario en
+  /// lugar de fallar en silencio; devuelve si terminó bien.
+  Future<bool> _attempt(Future<void> Function() action,
+      [String failure = 'No se pudo completar la acción. Inténtalo de nuevo.']) async {
+    try {
+      await action();
+      return true;
+    } catch (e) {
+      debugPrint('Operación fallida: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(failure)));
+      }
+      return false;
+    }
+  }
+
+  void _endSelection() {
+    if (!mounted) return;
+    setState(() {
+      _selectingFolders = false;
+      _selectedFolderIds.clear();
+      _selectingPhotos = false;
+      _selectedPhotoIds.clear();
+    });
   }
 
   Future<void> _moveSelectedFolders() async {
@@ -247,14 +282,13 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         excludeFolderIds: _selectedFolderIds.toList(),
       ),
     );
-    if (dest == null) return;
-    await _db.moveFolders(_selectedFolderIds.toList(),
-        dest['is_root'] == true ? null : dest['id'] as int);
-    setState(() {
-      _selectingFolders = false;
-      _selectedFolderIds.clear();
-    });
-    _load();
+    if (dest == null || !mounted) return;
+    final ok = await _attempt(
+        () => _db.moveFolders(_selectedFolderIds.toList(),
+            dest['is_root'] == true ? null : dest['id'] as int),
+        'No se pudo mover: una carpeta no puede ir dentro de sí misma.');
+    if (ok) _endSelection();
+    if (mounted) _load();
   }
 
   Future<void> _deleteSelectedFolders() async {
@@ -282,15 +316,15 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
-    for (final id in _selectedFolderIds) {
-      await _media.deleteFolder(id);
-    }
-    setState(() {
-      _selectingFolders = false;
-      _selectedFolderIds.clear();
+    if (confirm != true || !mounted) return;
+    final ids = _selectedFolderIds.toList();
+    await _attempt(() async {
+      for (final id in ids) {
+        await _media.deleteFolder(id);
+      }
     });
-    _load();
+    _endSelection();
+    if (mounted) _load();
   }
 
   Future<void> _moveSelectedPhotos() async {
@@ -300,17 +334,16 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
       backgroundColor: Colors.transparent,
       builder: (_) => const FolderTreeSheet(),
     );
-    if (dest == null) return;
-    await _db.movePhotos(_selectedPhotoIds.toList(), dest['id']);
-    setState(() {
-      _selectingPhotos = false;
-      _selectedPhotoIds.clear();
-    });
-    _load();
+    if (dest == null || !mounted) return;
+    final ok = await _attempt(
+        () => _db.movePhotos(_selectedPhotoIds.toList(), dest['id'] as int));
+    if (ok) _endSelection();
+    if (mounted) _load();
   }
 
   Future<void> _deleteSelectedPhotos() async {
     final noTrash = await PrefsService.instance.getNoTrash();
+    if (!mounted) return;
 
     final confirm = await showDialog<bool>(
       context: context,
@@ -341,25 +374,23 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
     final toDelete = _photos
         .where((p) => _selectedPhotoIds.contains(p['id']))
         .toList();
 
-    for (final p in toDelete) {
-      if (noTrash) {
-        await _media.deletePhoto(p);
-      } else {
-        await _db.moveToTrash(p);
+    await _attempt(() async {
+      for (final p in toDelete) {
+        if (noTrash) {
+          await _media.deletePhoto(p);
+        } else {
+          await _db.moveToTrash(p);
+        }
       }
-    }
-
-    setState(() {
-      _selectingPhotos = false;
-      _selectedPhotoIds.clear();
     });
-    _load();
+    _endSelection();
+    if (mounted) _load();
   }
 
   void _toggleFolderSelect(int id) {
@@ -450,6 +481,7 @@ class _AlbumsScreenState extends State<AlbumsScreen> {
         ),
       ],
     );
+    if (!mounted) return;
     if (selected == 'cover') {
       final changed = await showModalBottomSheet<bool>(
         context: context,
@@ -1359,34 +1391,4 @@ class _ListPhotoThumbState extends State<_ListPhotoThumb> {
           : Icon(Icons.photo, color: context.colors.textFaint, size: 24),
     );
   }
-}
-
-class _TriangleBadge extends CustomPainter {
-  final String count;
-  _TriangleBadge(this.count);
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    canvas.drawPath(
-      Path()
-        ..moveTo(0, 0)
-        ..lineTo(size.width, 0)
-        ..lineTo(0, size.height)
-        ..close(),
-      Paint()..color = const Color(0xFF1565C0),
-    );
-    (TextPainter(
-      text: TextSpan(
-          text: count,
-          style: const TextStyle(
-              color: Colors.white,
-              fontSize: 12,
-              fontWeight: FontWeight.bold)),
-      textDirection: TextDirection.ltr,
-    )..layout())
-        .paint(canvas, const Offset(3, 2));
-  }
-
-  @override
-  bool shouldRepaint(_TriangleBadge o) => o.count != count;
 }

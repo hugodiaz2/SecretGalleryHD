@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/security/password_service.dart';
+import '../../core/security/attempt_limiter.dart';
 import '../../core/security/intruder_service.dart';
 import '../../core/services/prefs_service.dart';
 import '../../core/services/theme_service.dart';
@@ -66,6 +67,7 @@ class _PasswordScreenState extends State<PasswordScreen>
 
   Future<void> _shakeError(String message) async {
     HapticFeedback.heavyImpact();
+    if (!mounted) return;
     setState(() {
       _error = true;
       _errorText = message;
@@ -79,8 +81,17 @@ class _PasswordScreenState extends State<PasswordScreen>
     if (password.isEmpty) return;
 
     if (widget.mode == PasswordMode.unlock) {
+      final left = await AttemptLimiter.instance.remaining();
+      if (!mounted) return;
+      if (left > Duration.zero) {
+        _pwCtrl.clear();
+        await _shakeError(
+            'Demasiados intentos. Espera ${AttemptLimiter.format(left)}');
+        return;
+      }
       final ok = await _passwordService.validatePassword(password);
       if (ok) {
+        await AttemptLimiter.instance.reset();
         HapticFeedback.heavyImpact();
         if (mounted) widget.onSuccess();
       } else {
@@ -88,8 +99,12 @@ class _PasswordScreenState extends State<PasswordScreen>
         if (_failedAttempts >= 3 && _failedAttempts % 3 == 0) {
           _triggerIntruderCapture();
         }
+        final wait = await AttemptLimiter.instance.recordFailure();
+        if (!mounted) return;
         _pwCtrl.clear();
-        await _shakeError('Contraseña incorrecta');
+        await _shakeError(wait > Duration.zero
+            ? 'Contraseña incorrecta. Espera ${AttemptLimiter.format(wait)}'
+            : 'Contraseña incorrecta');
       }
       return;
     }

@@ -14,6 +14,14 @@ class IntruderScreen extends StatefulWidget {
 }
 
 class _IntruderScreenState extends State<IntruderScreen> {
+  /// Las cargas y operaciones asíncronas pueden terminar después de que la
+  /// pantalla se cierre (por ejemplo, al bloquearse la app). Ignorar esas
+  /// actualizaciones evita el error "setState() called after dispose()".
+  @override
+  void setState(VoidCallback fn) {
+    if (mounted) super.setState(fn);
+  }
+
   final _db = DBHelper.instance;
   List<Map<String, dynamic>> _items = [];
   final Set<int> _selectedIds = {};
@@ -55,14 +63,19 @@ class _IntruderScreenState extends State<IntruderScreen> {
         ],
       ),
     );
-    if (confirm != true) return;
+    if (confirm != true || !mounted) return;
 
     final toDelete =
         _items.where((i) => _selectedIds.contains(i['id'])).toList();
     for (final item in toDelete) {
-      await MediaService.instance
-          .deleteEncryptedFile(item['encrypted_path']);
-      await _db.deleteIntruder(item['id']);
+      try {
+        // Primero el registro, para no dejar capturas rotas en la lista.
+        await _db.deleteIntruder(item['id'] as int);
+        await MediaService.instance
+            .deleteEncryptedFile(item['encrypted_path'] as String);
+      } catch (e) {
+        debugPrint('No se pudo eliminar la captura: $e');
+      }
     }
     setState(() {
       _selecting = false;

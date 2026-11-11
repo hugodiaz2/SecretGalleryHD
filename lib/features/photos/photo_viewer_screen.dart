@@ -12,6 +12,7 @@ import '../../core/services/prefs_service.dart';
 import '../../core/services/lifecycle_guard.dart';
 import '../../shared/widgets/folder_tree_sheet.dart';
 import '../../shared/widgets/unlock_helper.dart';
+import 'slideshow_screen.dart';
 import 'video_player_screen.dart';
 
 class PhotoViewerScreen extends StatefulWidget {
@@ -97,6 +98,28 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
         builder: (_) => VideoPlayerScreen(video: photo),
       ),
     );
+  }
+
+  /// Abre la presentación automática desde la foto actual y, al salir,
+  /// deja el visor en el último elemento mostrado.
+  Future<void> _startSlideshow() async {
+    final lastId = await Navigator.push<Object?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SlideshowScreen(
+          items: List<Map<String, dynamic>>.of(_photos),
+          initialIndex: _currentIndex,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    SystemChrome.setEnabledSystemUIMode(
+      _showBars ? SystemUiMode.edgeToEdge : SystemUiMode.immersiveSticky,
+    );
+    final index = _photos.indexWhere((p) => p['id'] == lastId);
+    if (index >= 0 && index != _currentIndex && _pageController.hasClients) {
+      _pageController.jumpToPage(index);
+    }
   }
 
   @override
@@ -222,6 +245,8 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: [
+              _barAction(Icons.slideshow_rounded, 'Presentación',
+                  _startSlideshow),
               _barAction(Icons.share_outlined, 'Compartir',
                   () => _sharePhoto(photo)),
               _barAction(Icons.drive_file_move_outline, 'Mover',
@@ -278,7 +303,16 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
           FolderTreeSheet(currentFolderId: photo['folder_id'] as int?),
     );
     if (dest == null || !mounted) return;
-    await DBHelper.instance.movePhoto(photo['id'] as int, dest['id'] as int);
+    try {
+      await DBHelper.instance
+          .movePhoto(photo['id'] as int, dest['id'] as int);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo completar la acción. Inténtalo de nuevo.')));
+      }
+      return;
+    }
     if (mounted) Navigator.pop(context);
   }
 
@@ -325,10 +359,18 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     );
     if (confirm != true || !mounted) return;
 
-    if (noTrash) {
-      await MediaService.instance.deletePhoto(photo);
-    } else {
-      await DBHelper.instance.moveToTrash(photo);
+    try {
+      if (noTrash) {
+        await MediaService.instance.deletePhoto(photo);
+      } else {
+        await DBHelper.instance.moveToTrash(photo);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo completar la acción. Inténtalo de nuevo.')));
+      }
+      return;
     }
     if (mounted) _removeFromViewer(photo);
   }

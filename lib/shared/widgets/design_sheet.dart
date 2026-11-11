@@ -42,23 +42,12 @@ class _DesignSheetState extends State<DesignSheet> {
   @override
   void initState() {
     super.initState();
-     _viewType = widget.currentViewType;
+    _viewType = widget.currentViewType;
     _sort = widget.currentSort;
     _narrowBorders = widget.currentNarrowBorders;
     _showPhotoPreview = widget.currentShowPhotoPreview;
     _showFolderPreview = widget.currentShowFolderPreview;
   }
-
-  Future<void> _loadPrefs() async {
-  final narrow = await PrefsService.instance.getNarrowBorders();
-  final photo = await PrefsService.instance.getShowPhotoPreview();
-  final folder = await PrefsService.instance.getShowFolderPreview();
-  setState(() {
-    _narrowBorders = narrow;
-    _showPhotoPreview = photo;
-    _showFolderPreview = folder;
-  });
-}
 
   @override
   Widget build(BuildContext context) {
@@ -179,7 +168,7 @@ _switchTile(
                   widget.onNarrowBordersChanged(_narrowBorders);
                   widget.onPhotoPreviewChanged(_showPhotoPreview);
                   widget.onFolderPreviewChanged(_showFolderPreview);
-                  Navigator.pop(context);
+                  if (context.mounted) Navigator.pop(context);
                 },
                 child: Text('Aplicar',
                     style: GoogleFonts.poppins(

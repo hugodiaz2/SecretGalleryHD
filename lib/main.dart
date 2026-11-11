@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 import 'package:screen_brightness/screen_brightness.dart';
 import 'core/security/pin_service.dart';
+import 'core/security/attempt_limiter.dart';
 import 'core/security/crypto_service.dart';
 import 'core/services/media_service.dart';
 import 'core/services/backup_service.dart';
@@ -192,6 +193,8 @@ class _AppEntryState extends State<AppEntry> with WidgetsBindingObserver {
   // bloqueo. Con setState, AppEntry sigue montado toda la sesión.
   Future<void> _goToGallery() async {
     if (BackupService.busy.value) return;
+    // Cualquier acceso correcto (también la huella) reinicia los fallos.
+    await AttemptLimiter.instance.reset();
     final method = await PrefsService.instance.getAuthMethod();
     if (!mounted ||
         WidgetsBinding.instance.lifecycleState == AppLifecycleState.paused)

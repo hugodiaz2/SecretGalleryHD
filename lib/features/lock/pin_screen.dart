@@ -1,7 +1,9 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../core/security/pin_service.dart';
+import '../../core/security/attempt_limiter.dart';
 import '../../core/security/intruder_service.dart';
 import '../../core/security/biometric_service.dart';
 import '../../core/services/prefs_service.dart';
@@ -30,6 +32,13 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
   bool _error = false;
   int _failedAttempts = 0;
   bool _hasFingerprintOption = false;
+
+  /// Espera obligatoria tras demasiados fallos y validación en curso.
+  Duration _wait = Duration.zero;
+  Timer? _waitTimer;
+  bool _checking = false;
+
+  bool get _locked => _wait > Duration.zero;
 
   late final AnimationController _shakeController;
   late final AnimationController _dotController;
@@ -65,7 +74,37 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
       CurvedAnimation(parent: _dotController, curve: Curves.easeOut),
     );
 
-    if (widget.mode == PinMode.unlock) _checkFingerprintOption();
+    if (widget.mode == PinMode.unlock) {
+      _checkFingerprintOption();
+      AttemptLimiter.instance.remaining().then((left) {
+        if (left > Duration.zero) _startCountdown(left);
+      });
+    }
+  }
+
+  void _startCountdown(Duration wait) {
+    _waitTimer?.cancel();
+    final end = DateTime.now().add(wait);
+    void tick() {
+      if (!mounted) return;
+      final left = end.difference(DateTime.now());
+      if (left <= Duration.zero) {
+        _waitTimer?.cancel();
+        setState(() {
+          _wait = Duration.zero;
+          _subtitle = 'Ingresa tu PIN';
+        });
+        return;
+      }
+      setState(() {
+        _wait = left;
+        _subtitle = 'Demasiados intentos. Espera ${AttemptLimiter.format(left)}';
+      });
+    }
+
+    tick();
+    _waitTimer =
+        Timer.periodic(const Duration(milliseconds: 500), (_) => tick());
   }
 
   Future<void> _checkFingerprintOption() async {
@@ -84,23 +123,32 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    _waitTimer?.cancel();
     _shakeController.dispose();
     _dotController.dispose();
     super.dispose();
   }
 
   void _onKey(String digit) {
-    if (_entered.length >= _pinLength) return;
+    if (_entered.length >= _pinLength || _locked || _checking) return;
     HapticFeedback.lightImpact();
     setState(() => _entered.add(digit));
     _dotController.forward(from: 0).then((_) => _dotController.reverse());
     if (_entered.length == _pinLength) {
-      Future.delayed(const Duration(milliseconds: 200), _onComplete);
+      _checking = true;
+      Future.delayed(const Duration(milliseconds: 200), () async {
+        try {
+          await _onComplete();
+        } finally {
+          _checking = false;
+        }
+      });
     }
   }
 
   void _onDelete() {
-    if (_entered.isEmpty) return;
+    // Durante la validación el PIN ya está completo y no debe cambiar.
+    if (_entered.isEmpty || _checking) return;
     HapticFeedback.selectionClick();
     setState(() => _entered.removeLast());
   }
@@ -115,9 +163,17 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
     final pin = _entered.join();
 
     if (widget.mode == PinMode.unlock) {
+      final left = await AttemptLimiter.instance.remaining();
+      if (left > Duration.zero) {
+        if (!mounted) return;
+        setState(() => _entered.clear());
+        _startCountdown(left);
+        return;
+      }
       final ok = await _pinService.validatePin(pin);
       if (ok) {
         _failedAttempts = 0;
+        await AttemptLimiter.instance.reset();
         HapticFeedback.heavyImpact();
         if (mounted) widget.onSuccess();
       } else {
@@ -126,7 +182,19 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
         if (_failedAttempts >= 3 && _failedAttempts % 3 == 0) {
           _triggerIntruderCapture();
         }
+        final wait = await AttemptLimiter.instance.recordFailure();
         if (!mounted) return;
+        if (wait > Duration.zero) {
+          setState(() {
+            _error = true;
+            _entered.clear();
+          });
+          await _shakeController.forward(from: 0);
+          if (!mounted) return;
+          setState(() => _error = false);
+          _startCountdown(wait);
+          return;
+        }
         setState(() {
           _error = true;
           _entered.clear();
@@ -138,7 +206,7 @@ class _PinScreenState extends State<PinScreen> with TickerProviderStateMixin {
           _subtitle = 'PIN incorrecto, intenta de nuevo';
         });
         await Future.delayed(const Duration(seconds: 2));
-        if (mounted) setState(() => _subtitle = 'Ingresa tu PIN');
+        if (mounted && !_locked) setState(() => _subtitle = 'Ingresa tu PIN');
       }
       return;
     }

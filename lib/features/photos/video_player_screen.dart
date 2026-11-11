@@ -13,6 +13,7 @@ import '../../core/services/prefs_service.dart';
 import '../../core/services/lifecycle_guard.dart';
 import '../../shared/widgets/folder_tree_sheet.dart';
 import '../../shared/widgets/unlock_helper.dart';
+import 'slideshow_screen.dart';
 
 /// Reproductor de videos de una carpeta. Deslizar de lado cambia de video;
 /// solo el video visible se descifra y reproduce.
@@ -50,6 +51,26 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
     super.dispose();
   }
 
+  /// Presentación automática de los videos desde el actual; al salir queda
+  /// en el último que se reprodujo.
+  Future<void> _startSlideshow() async {
+    final lastId = await Navigator.push<Object?>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => SlideshowScreen(
+          items: List<Map<String, dynamic>>.of(_videos),
+          initialIndex: _index,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+    final i = _videos.indexWhere((v) => v['id'] == lastId);
+    if (i >= 0 && i != _index && _pageController.hasClients) {
+      _pageController.jumpToPage(i);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -63,6 +84,7 @@ class _VideoPlayerScreenState extends State<VideoPlayerScreen> {
           video: _videos[i],
           active: i == _index,
           counter: _videos.length > 1 ? '${i + 1} / ${_videos.length}' : null,
+          onSlideshow: _startSlideshow,
         ),
       ),
     );
@@ -73,12 +95,14 @@ class _VideoPage extends StatefulWidget {
   final Map<String, dynamic> video;
   final bool active;
   final String? counter;
+  final VoidCallback? onSlideshow;
 
   const _VideoPage({
     super.key,
     required this.video,
     required this.active,
     this.counter,
+    this.onSlideshow,
   });
 
   @override
@@ -352,6 +376,15 @@ class _VideoPageState extends State<_VideoPage> {
                         style: GoogleFonts.poppins(
                             color: Colors.white, fontSize: 13)),
                   ),
+                if (widget.onSlideshow != null) ...[
+                  _circle(IconButton(
+                    icon: const Icon(Icons.slideshow_rounded,
+                        color: Colors.white),
+                    tooltip: 'Presentación',
+                    onPressed: _openSlideshow,
+                  )),
+                  const SizedBox(width: 8),
+                ],
                 _circle(_buildMenu()),
               ],
             ),
@@ -440,6 +473,12 @@ class _VideoPageState extends State<_VideoPage> {
     );
   }
 
+  void _openSlideshow() {
+    // La presentación reproduce su propia copia; esta se detiene.
+    _controller?.pause();
+    widget.onSlideshow?.call();
+  }
+
   Widget _buildMenu() {
     return PopupMenuButton<String>(
       icon: const Icon(Icons.more_vert, color: Colors.white),
@@ -447,6 +486,8 @@ class _VideoPageState extends State<_VideoPage> {
       onOpened: () => _controller?.pause(),
       onSelected: (v) {
         switch (v) {
+          case 'slideshow':
+            _openSlideshow();
           case 'share':
             _shareVideo();
           case 'move':
@@ -460,6 +501,8 @@ class _VideoPageState extends State<_VideoPage> {
         }
       },
       itemBuilder: (_) => [
+        if (widget.onSlideshow != null)
+          _menuItem('slideshow', Icons.slideshow_rounded, 'Presentación'),
         _menuItem('share', Icons.share_outlined, 'Compartir'),
         _menuItem('move', Icons.drive_file_move_outline, 'Mover'),
         _menuItem('unlock', Icons.lock_open_outlined, 'Desbloquear'),
@@ -497,8 +540,16 @@ class _VideoPageState extends State<_VideoPage> {
           FolderTreeSheet(currentFolderId: widget.video['folder_id'] as int?),
     );
     if (dest == null || !mounted) return;
-    await DBHelper.instance
-        .movePhoto(widget.video['id'] as int, dest['id'] as int);
+    try {
+      await DBHelper.instance
+          .movePhoto(widget.video['id'] as int, dest['id'] as int);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo completar la acción. Inténtalo de nuevo.')));
+      }
+      return;
+    }
     if (mounted) Navigator.pop(context);
   }
 
@@ -547,10 +598,18 @@ class _VideoPageState extends State<_VideoPage> {
     );
     if (confirm != true || !mounted) return;
 
-    if (noTrash) {
-      await MediaService.instance.deletePhoto(widget.video);
-    } else {
-      await DBHelper.instance.moveToTrash(widget.video);
+    try {
+      if (noTrash) {
+        await MediaService.instance.deletePhoto(widget.video);
+      } else {
+        await DBHelper.instance.moveToTrash(widget.video);
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo completar la acción. Inténtalo de nuevo.')));
+      }
+      return;
     }
     if (mounted) Navigator.pop(context);
   }

@@ -30,6 +30,7 @@ class PrefsService {
   static const _keyAccentColor = 'accent_color';
   static const _keyCamouflageMode = 'camouflage_mode';
   static const _keyAuthMethod = 'auth_method';
+  static const _keySlideshowSeconds = 'slideshow_seconds';
 
   // ── Grid ────────────────────────────────────────────────
   Future<GridViewType> getGridType() async {
@@ -57,6 +58,15 @@ class PrefsService {
   Future<void> saveSort(String sort) async {
     await _storage.write(key: _keySort, value: sort);
   }
+
+  // ── Presentación (slideshow) ────────────────────────────
+  Future<int> getSlideshowSeconds() async {
+    final val = int.tryParse(await _storage.read(key: _keySlideshowSeconds) ?? '');
+    return (val == null || val < 1) ? 4 : val;
+  }
+
+  Future<void> saveSlideshowSeconds(int seconds) =>
+      _storage.write(key: _keySlideshowSeconds, value: seconds.toString());
 
   // ── Booleans ────────────────────────────────────────────
   Future<bool> _getBool(String key, {bool defaultValue = false}) async {

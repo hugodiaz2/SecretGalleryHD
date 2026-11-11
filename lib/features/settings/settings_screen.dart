@@ -22,6 +22,14 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  /// Las cargas y operaciones asíncronas pueden terminar después de que la
+  /// pantalla se cierre (por ejemplo, al bloquearse la app). Ignorar esas
+  /// actualizaciones evita el error "setState() called after dispose()".
+  @override
+  void setState(VoidCallback fn) {
+    if (mounted) super.setState(fn);
+  }
+
   bool _loading = true;
 
   // Toggles
@@ -90,6 +98,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _toggle(String key, bool value) async {
+    try {
+      await _applyToggle(key, value);
+    } catch (e) {
+      debugPrint('No se pudo cambiar el ajuste $key: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('No se pudo guardar el ajuste. Inténtalo de nuevo.')));
+      }
+    }
+  }
+
+  Future<void> _applyToggle(String key, bool value) async {
     switch (key) {
       case 'closeOnMinimize':
         await PrefsService.instance.saveCloseOnMinimize(value);

@@ -465,6 +465,17 @@ class DBHelper implements TransferRepository {
     });
   }
 
+  /// Borra el registro de una foto y quita su portada en una sola
+  /// transacción.
+  Future<void> deletePhotoRecord(int id, String encryptedPath) async {
+    final db = await database;
+    await db.transaction((txn) async {
+      await txn.update('folders', {'cover_photo_path': null},
+          where: 'cover_photo_path = ?', whereArgs: [encryptedPath]);
+      await txn.delete('photos', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
   Future<int> deletePhoto(int id) async {
     final db = await database;
     return await db.delete('photos', where: 'id = ?', whereArgs: [id]);
@@ -681,7 +692,7 @@ class DBHelper implements TransferRepository {
 
   String _getFileType(String name) {
     final ext = name.split('.').last.toLowerCase();
-    if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp'].contains(ext)) {
+    if (['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'].contains(ext)) {
       return 'video';
     }
     return 'photo';
@@ -707,8 +718,8 @@ class DBHelper implements TransferRepository {
     await db.transaction((txn) async {
       final rows =
           await txn.query('trash', where: 'id = ?', whereArgs: [item['id']]);
-      if (rows.isEmpty)
-        return; // Repeated taps must not duplicate a restored photo.
+      // Repeated taps must not duplicate a restored photo.
+      if (rows.isEmpty) return;
       final current = rows.first;
       final payload = current['photo_payload'] as String?;
       final photo = payload == null

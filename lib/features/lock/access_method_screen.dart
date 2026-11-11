@@ -245,8 +245,8 @@ class _AccessMethodScreenState extends State<AccessMethodScreen> {
                   return;
                 }
                 await _pinService.savePin(newPin);
-                if (ctx.mounted) {
-                  Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       backgroundColor:
@@ -333,8 +333,8 @@ class _AccessMethodScreenState extends State<AccessMethodScreen> {
                   return;
                 }
                 await _passwordService.savePassword(newPw);
-                if (ctx.mounted) {
-                  Navigator.pop(ctx);
+                if (ctx.mounted) Navigator.pop(ctx);
+                if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
                       backgroundColor:

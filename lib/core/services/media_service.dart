@@ -191,9 +191,13 @@ class MediaService {
 
   // ── Eliminar foto del vault ──────────────────────────────
   Future<void> deletePhoto(Map<String, dynamic> photo) async {
-    await _db.clearCoverIfDeleted(photo['encrypted_path']);
-    await deleteEncryptedFile(photo['encrypted_path']);
-    await _db.deletePhoto(photo['id']);
+    final path = photo['encrypted_path'] as String;
+    // Primero el registro: si falla, la foto sigue intacta y visible. Borrar
+    // antes el archivo dejaba entradas rotas en la galería.
+    await _db.deletePhotoRecord(photo['id'] as int, path);
+    final cached = _photoBytesCache.remove(path);
+    if (cached != null) _originalBytes -= cached.lengthInBytes;
+    await deleteEncryptedFile(path);
   }
 
   // ── Eliminar carpeta y todo su contenido ─────────────────
