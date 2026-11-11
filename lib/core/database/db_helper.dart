@@ -239,8 +239,12 @@ class DBHelper implements TransferRepository {
   /// 1. Portada manual si existe
   /// 2. Foto más reciente de la carpeta
   /// 3. Foto más reciente de subcarpetas (recursivo)
-  Future<String?> getCoverPhoto(int folderId) async {
-    final db = await database;
+  Future<String?> getCoverPhoto(int folderId) async =>
+      _resolveCover(await database, folderId);
+
+  Future<String?> _resolveCover(DatabaseExecutor db, int folderId,
+      [Set<int>? visited]) async {
+    if (!(visited ??= <int>{}).add(folderId)) return null;
 
     // Revisar portada manual
     final folder = await db.query('folders',
@@ -264,11 +268,50 @@ class DBHelper implements TransferRepository {
     final subs = await db
         .query('folders', where: 'parent_id = ?', whereArgs: [folderId]);
     for (final sub in subs) {
-      final path = await getCoverPhoto(sub['id'] as int);
+      final path = await _resolveCover(db, sub['id'] as int, visited);
       if (path != null) return path;
     }
 
     return null;
+  }
+
+  /// Carpeta, su padre, el padre del padre... (sin ciclos).
+  Future<List<int>> _folderAndAncestors(
+      DatabaseExecutor db, int folderId) async {
+    final chain = <int>[];
+    int? current = folderId;
+    while (current != null && current != 0 && !chain.contains(current)) {
+      chain.add(current);
+      final rows = await db.query('folders',
+          columns: ['parent_id'], where: 'id = ?', whereArgs: [current], limit: 1);
+      current = rows.isEmpty ? null : rows.first['parent_id'] as int?;
+    }
+    return chain;
+  }
+
+  /// Mover fotos nunca debe cambiar la portada que se ve en las carpetas.
+  /// Las portadas automáticas (la foto más reciente) se fijan antes del
+  /// movimiento en las carpetas que cambian de contenido.
+  Future<void> _pinCoversBeforeMove(DatabaseExecutor txn,
+      Set<int> sourceFolders, Set<String> movedPaths, int destination) async {
+    final destinationChain = (await _folderAndAncestors(txn, destination)).toSet();
+    final affected = <int>{...destinationChain};
+    for (final source in sourceFolders) {
+      affected.addAll(await _folderAndAncestors(txn, source));
+    }
+    for (final id in affected) {
+      final rows = await txn.query('folders',
+          columns: ['cover_photo_path'], where: 'id = ?', whereArgs: [id], limit: 1);
+      if (rows.isEmpty) continue;
+      final manual = rows.first['cover_photo_path'] as String?;
+      if (manual != null && manual.isNotEmpty) continue;
+      final cover = await _resolveCover(txn, id);
+      if (cover == null) continue;
+      // Si la portada sale de la carpeta, ya no puede conservarse.
+      if (movedPaths.contains(cover) && !destinationChain.contains(id)) continue;
+      await txn.update('folders', {'cover_photo_path': cover},
+          where: 'id = ?', whereArgs: [id]);
+    }
   }
 
   // ══════════════════════════════════════════
@@ -312,6 +355,13 @@ class DBHelper implements TransferRepository {
         'photos', {'exported_asset_id': assetId},
         where: 'id = ?', whereArgs: [id]);
     if (count != 1) throw StateError('El registro privado ya no existe.');
+  }
+
+  @override
+  Future<void> forgetExport(int id) async {
+    await (await database).update(
+        'photos', {'exported_asset_id': null, 'export_name': null},
+        where: 'id = ?', whereArgs: [id]);
   }
 
   @override
@@ -381,11 +431,8 @@ class DBHelper implements TransferRepository {
         orderBy: 'date_added DESC');
   }
 
-  Future<int> movePhoto(int photoId, int newFolderId) async {
-    final db = await database;
-    return await db.update('photos', {'folder_id': newFolderId, 'manual_order': null},
-        where: 'id = ?', whereArgs: [photoId]);
-  }
+  Future<int> movePhoto(int photoId, int newFolderId) async =>
+      movePhotos([photoId], newFolderId);
 
   Future<int> movePhotos(List<int> photoIds, int newFolderId) async {
     final db = await database;
@@ -395,8 +442,20 @@ class DBHelper implements TransferRepository {
             where: 'id = ?', whereArgs: [newFolderId], limit: 1);
         if (folders.isEmpty) throw StateError('La carpeta de destino ya no existe.');
       }
+      final ids = photoIds.toSet();
+      final sources = <int>{};
+      final paths = <String>{};
+      for (final id in ids) {
+        final rows = await txn.query('photos',
+            columns: ['folder_id', 'encrypted_path'],
+            where: 'id = ?', whereArgs: [id], limit: 1);
+        if (rows.isEmpty) throw StateError('Un archivo seleccionado ya no existe.');
+        sources.add(rows.first['folder_id'] as int? ?? 0);
+        paths.add(rows.first['encrypted_path'] as String);
+      }
+      await _pinCoversBeforeMove(txn, sources, paths, newFolderId);
       int count = 0;
-      for (final id in photoIds.toSet()) {
+      for (final id in ids) {
         final updated = await txn.update('photos', {'folder_id': newFolderId, 'manual_order': null},
             where: 'id = ?', whereArgs: [id]);
         if (updated != 1) throw StateError('Un archivo seleccionado ya no existe.');

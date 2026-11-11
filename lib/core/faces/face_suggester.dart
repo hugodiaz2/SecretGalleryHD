@@ -4,6 +4,8 @@ import '../services/media_service.dart';
 import 'face_matcher.dart';
 import 'face_service.dart';
 import 'face_store.dart';
+import 'style_matcher.dart';
+import 'style_service.dart';
 
 class PhotoMatch {
   final Map<String, dynamic> photo;
@@ -12,7 +14,12 @@ class PhotoMatch {
   /// true si solo coincidió en el segundo intento (más tolerante): conviene
   /// revisarla antes de mover.
   final bool uncertain;
-  const PhotoMatch(this.photo, this.score, {this.uncertain = false});
+
+  /// true si la sugerencia viene del estilo de la foto (colores, composición,
+  /// luz...) y no de un rostro. Siempre es "posible": se revisa antes de mover.
+  final bool byStyle;
+  const PhotoMatch(this.photo, this.score,
+      {this.uncertain = false, this.byStyle = false});
 }
 
 class FaceSuggestion {
@@ -30,7 +37,11 @@ class FaceSuggestResult {
   final int noMatch; // con rostro pero sin carpeta parecida
   final int unreadable; // no se pudieron leer
   final List<Map<String, dynamic>> unmatched; // con rostro, sin carpeta
+  final int learnedStyleFolders; // carpetas con estilo reconocible
+  final int styleMatched; // fotos sugeridas por estilo
   const FaceSuggestResult({
+    this.learnedStyleFolders = 0,
+    this.styleMatched = 0,
     required this.unmatched,
     required this.suggestions,
     required this.learnedFolders,
@@ -79,11 +90,16 @@ class FaceSuggester {
   /// Para aprender a una persona bastan unas decenas de fotos de su carpeta.
   static const maxLearnPerFolder = 60;
 
+  /// El estilo es una señal más débil que un rostro: se aprende de más fotos
+  /// por carpeta, y cada vez que se suben fotos nuevas el estilo se afina.
+  static const maxStylePerFolder = 150;
+
   /// De cada carpeta toma, como mucho, [maxLearnPerFolder] fotos en total
   /// (contando las ya analizadas), repartidas a lo largo de la carpeta para
   /// tener ángulos y momentos distintos.
   static List<Map<String, dynamic>> _sampleForLearning(
-      List<Map<String, dynamic>> inFolders, Set<String> scanned) {
+      List<Map<String, dynamic>> inFolders, Set<String> scanned,
+      {int max = maxLearnPerFolder}) {
     final byFolder = <int, List<Map<String, dynamic>>>{};
     for (final r in inFolders) {
       byFolder.putIfAbsent(r['folder_id'] as int, () => []).add(r);
@@ -91,7 +107,7 @@ class FaceSuggester {
     final pick = <Map<String, dynamic>>[];
     for (final photos in byFolder.values) {
       final done = photos.where((r) => scanned.contains(r['encrypted_path'])).length;
-      final need = maxLearnPerFolder - done;
+      final need = max - done;
       final todo =
           photos.where((r) => !scanned.contains(r['encrypted_path'])).toList();
       if (need <= 0 || todo.isEmpty) continue;
@@ -205,12 +221,16 @@ class FaceSuggester {
     final confident = <int, List<Float32List>>{};
     final retryPhotos = <Map<String, dynamic>>[];
     var noFace = 0;
+    final noFacePhotos = <Map<String, dynamic>>[];
     for (final photo in home) {
       final path = photo['encrypted_path'] as String;
       if (failed.contains(path)) continue;
       final faces = homeFaces[path];
       if (faces == null || faces.isEmpty) {
-        if ((counts[path] ?? 0) == 0) noFace++;
+        if ((counts[path] ?? 0) == 0) {
+          noFace++;
+          noFacePhotos.add(photo);
+        }
         continue;
       }
       final best = <int, double>{};
@@ -258,6 +278,79 @@ class FaceSuggester {
       });
     }
 
+    // 5) Por estilo: fotos sin rostro visible y fotos con rostro que no se
+    // parecen a ninguna carpeta. Se comparan con el estilo de cada carpeta
+    // (colores, luz, composición, detalle), aprendido de las fotos que ya
+    // tiene; al subir más fotos a una carpeta su estilo se afina solo.
+    var styleMatched = 0;
+    var learnedStyle = 0;
+    final styleCandidates = [...noFacePhotos, ...unmatched];
+    if (styleCandidates.isNotEmpty && byFolder.isNotEmpty && !isCancelled()) {
+      final styled = await store.styledPaths();
+      final stylePending = [
+        ..._sampleForLearning(inFolders, styled, max: maxStylePerFolder),
+        ...styleCandidates.where((r) => !styled.contains(r['encrypted_path'])),
+      ];
+      var done = 0;
+      var next = 0;
+      onProgress('Analizando estilo de las fotos', 0, stylePending.length);
+      Future<void> styleWorker() async {
+        while (!isCancelled()) {
+          final index = next++;
+          if (index >= stylePending.length) return;
+          final path = stylePending[index]['encrypted_path'] as String;
+          final vector = await StyleService.instance.describePhoto(path);
+          if (vector != null) await store.saveStyle(path, vector);
+          onProgress('Analizando estilo de las fotos', ++done, stylePending.length);
+        }
+      }
+
+      await Future.wait(List.generate(_workers, (_) => styleWorker()));
+      if (isCancelled()) return null;
+      onProgress('Buscando coincidencias', 1, 1);
+
+      final folderStyles = <int, List<Float32List>>{};
+      for (final entry in byFolder.entries) {
+        final found = await store.stylesFor(entry.value);
+        if (found.isNotEmpty) folderStyles[entry.key] = found.values.toList();
+      }
+      final candidateStyles = await store
+          .stylesFor(styleCandidates.map((r) => r['encrypted_path'] as String));
+      final everything = [
+        for (final list in folderStyles.values) ...list,
+        ...candidateStyles.values,
+      ];
+      if (everything.isNotEmpty && folderStyles.isNotEmpty) {
+        final mean = meanVector(everything);
+        final styleProfiles = <StyleProfile>[];
+        folderStyles.forEach((folderId, vectors) {
+          final profile = buildStyleProfile(
+              folderId, [for (final v in vectors) centerVector(v, mean)]);
+          if (profile != null) styleProfiles.add(profile);
+        });
+        learnedStyle = styleProfiles.length;
+        if (styleProfiles.isNotEmpty) {
+          final matchedPaths = <String>{};
+          for (final photo in styleCandidates) {
+            final path = photo['encrypted_path'] as String;
+            final vector = candidateStyles[path];
+            if (vector == null) continue;
+            final hit = matchStyle(centerVector(vector, mean), styleProfiles);
+            if (hit == null) continue;
+            grouped.putIfAbsent(hit.folderId, () => []).add(PhotoMatch(
+                photo, hit.score,
+                uncertain: true, byStyle: true));
+            matchedPaths.add(path);
+            styleMatched++;
+          }
+          noFace -= noFacePhotos
+              .where((r) => matchedPaths.contains(r['encrypted_path']))
+              .length;
+          unmatched.removeWhere((r) => matchedPaths.contains(r['encrypted_path']));
+        }
+      }
+    }
+
     // Dentro de cada grupo, primero las seguras.
     final suggestions = grouped.entries
         .where((e) => names.containsKey(e.key))
@@ -280,6 +373,8 @@ class FaceSuggester {
       noMatch: unmatched.length,
       unreadable: unreadable,
       unmatched: unmatched,
+      learnedStyleFolders: learnedStyle,
+      styleMatched: styleMatched,
     );
   }
 }

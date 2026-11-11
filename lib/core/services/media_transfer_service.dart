@@ -14,6 +14,11 @@ abstract class TransferRepository {
   Future<String> prepareExport(int id, String proposedName);
   Future<void> rememberExport(int id, String assetId);
   Future<void> finishExport(int id, String encryptedPath);
+
+  /// La copia pública ya está verificada y el archivo privado se conserva:
+  /// olvida el recibo de exportación para que un nuevo desbloqueo publique
+  /// otra copia en lugar de reutilizar esta.
+  Future<void> forgetExport(int id);
 }
 
 abstract class TransferGallery {
@@ -232,7 +237,10 @@ class MediaTransferService {
         return result;
       });
 
-  Future<TransferResult> unlockPhotos(List<Map<String, dynamic>> photos) =>
+  /// Con [keepInVault] se restaura una copia verificada en la galería pero el
+  /// archivo privado se conserva en la bóveda.
+  Future<TransferResult> unlockPhotos(List<Map<String, dynamic>> photos,
+          {bool keepInVault = false}) =>
       _exclusive(() async {
         final result = TransferResult();
         if (!await gallery.requestAccess()) {
@@ -313,6 +321,11 @@ class MediaTransferService {
             if (publicFile == null || await digestFile(publicFile) != digest) {
               throw StateError(
                   'No se pudo verificar la copia pública; se conserva la privada.');
+            }
+            if (keepInVault) {
+              await repository.forgetExport(id);
+              result.completed.add(id.toString());
+              return;
             }
             await repository.finishExport(id, path);
             result.completed.add(id.toString());

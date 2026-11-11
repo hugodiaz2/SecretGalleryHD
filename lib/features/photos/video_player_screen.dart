@@ -503,13 +503,11 @@ class _VideoPageState extends State<_VideoPage> {
   }
 
   // ── Desbloquear ───────────────────────────────────────────
-  void _unlockVideo() {
+  Future<void> _unlockVideo() async {
     _controller?.pause();
-    confirmUnlock(
-      context,
-      [widget.video],
-      onDone: () => Navigator.pop(context),
-    );
+    // Solo se sale del reproductor si el video ya no está en la bóveda.
+    final removed = await confirmUnlock(context, [widget.video]);
+    if (removed && mounted) Navigator.pop(context);
   }
 
   // ── Eliminar / papelera ───────────────────────────────────

@@ -285,15 +285,15 @@ class _FaceSuggestScreenState extends State<FaceSuggestScreen> {
   Widget _buildResult() {
     final result = _result;
     if (result == null) return const SizedBox.shrink();
-    if (result.learnedFolders == 0) {
+    if (result.learnedFolders == 0 && result.learnedStyleFolders == 0) {
       return _message(
         Icons.folder_off_outlined,
-        'Aún no hay rostros que aprender',
+        'Aún no hay rostros ni estilos que aprender',
         detail: widget.folderId == 0
-            ? 'Necesito carpetas con al menos 3 fotos donde aparezca la persona, '
-                'por ejemplo una carpeta con tu nombre.'
+            ? 'Necesito carpetas con al menos 3 fotos donde aparezca la persona '
+                'o con 8 fotos de un estilo parecido (colores, luz, tipo de foto).'
             : 'Las subcarpetas de esta carpeta necesitan al menos 3 fotos '
-                'donde aparezca la persona.',
+                'con la misma persona o 8 fotos de un estilo parecido.',
       );
     }
     if (result.homePhotos == 0) {
@@ -487,7 +487,7 @@ class _FaceSuggestScreenState extends State<FaceSuggestScreen> {
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
-                            '${match.uncertain ? 'posible ' : ''}${(match.score * 100).round()}%',
+                            '${match.byStyle ? 'estilo ' : (match.uncertain ? 'posible ' : '')}${(match.score * 100).round()}%',
                             style: const TextStyle(
                                 color: Colors.white, fontSize: 10)),
                       ),

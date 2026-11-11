@@ -213,8 +213,10 @@ class MediaService {
   }
 
   // ── Desbloquear y restaurar a galería ───────────────────
-  Future<TransferResult> unlockPhotos(List<Map<String, dynamic>> photos) async {
-    final result = await _transfers.unlockPhotos(photos);
+  Future<TransferResult> unlockPhotos(List<Map<String, dynamic>> photos,
+      {bool keepInVault = false}) async {
+    final result =
+        await _transfers.unlockPhotos(photos, keepInVault: keepInVault);
     clearThumbnailCaches();
     return result;
   }

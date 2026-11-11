@@ -76,6 +76,12 @@ class FakeRepository implements TransferRepository {
   }
 
   @override
+  Future<void> forgetExport(int id) async {
+    rows[id]!['exported_asset_id'] = null;
+    rows[id]!['export_name'] = null;
+  }
+
+  @override
   Future<void> finishExport(int id, String encryptedPath) async {
     if (failFinish) throw StateError('commit failed');
     rows.remove(id);
@@ -300,6 +306,28 @@ void main() {
     ]);
     expect(gallery.publishes, 1);
     expect(gallery.assets, hasLength(1));
+  });
+
+  test('unlock keeping the private copy restores one public copy each time',
+      () async {
+    await hide([
+      await gallery.add('1', [1, 2, 3])
+    ]);
+    final photo = repository.rows.values.single;
+    final privatePath = photo['encrypted_path'] as String;
+    final first = await service.unlockPhotos([photo], keepInVault: true);
+    expect(first.failed, isEmpty);
+    expect(first.completed, hasLength(1));
+    expect(gallery.assets, hasLength(1));
+    expect(repository.rows, hasLength(1));
+    expect(repository.rows.values.single['exported_asset_id'], isNull);
+    expect(await File(privatePath).readAsBytes(), [1, 2, 3]);
+    // Elegir eliminar después publica otra copia y retira la privada.
+    final second = await service.unlockPhotos([photo]);
+    expect(second.failed, isEmpty);
+    expect(gallery.publishes, 2);
+    expect(repository.rows, isEmpty);
+    expect(await File(privatePath).exists(), isFalse);
   });
 
   for (final failure in ['publish', 'verification', 'receipt', 'commit']) {

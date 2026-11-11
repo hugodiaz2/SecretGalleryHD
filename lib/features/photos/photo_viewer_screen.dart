@@ -33,6 +33,15 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   late int _currentIndex;
   bool _showBars = true;
 
+  /// Copia local: al eliminar o desbloquear una foto el visor se queda abierto
+  /// y pasa a la de al lado en lugar de cerrarse.
+  late final List<Map<String, dynamic>> _photos =
+      List<Map<String, dynamic>>.of(widget.photos);
+  late final Object? _initialId = widget.photos.isEmpty
+      ? null
+      : widget.photos[widget.initialIndex]['id'];
+  bool _autoOpenDone = false;
+
   @override
   void initState() {
     super.initState();
@@ -61,6 +70,26 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     return ['mp4', 'mov', 'avi', 'mkv', 'webm', '3gp', 'flv'].contains(ext);
   }
 
+  /// Quita [photo] del visor y muestra la siguiente (o la anterior si era la
+  /// última). Si ya no queda ninguna, cierra el visor.
+  void _removeFromViewer(Map<String, dynamic> photo) {
+    final index = _photos.indexWhere((p) => p['id'] == photo['id']);
+    if (index < 0) return;
+    if (_photos.length == 1) {
+      Navigator.pop(context);
+      return;
+    }
+    final wasLast = index == _photos.length - 1;
+    setState(() {
+      _photos.removeAt(index);
+      _currentIndex = wasLast ? index - 1 : index;
+    });
+    // Al quitar la última, la página visible deja de existir.
+    if (wasLast && _pageController.hasClients) {
+      _pageController.jumpToPage(_currentIndex);
+    }
+  }
+
   void _openVideoPlayer(Map<String, dynamic> photo) {
     Navigator.push(
       context,
@@ -72,7 +101,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final currentPhoto = widget.photos[_currentIndex];
+    final currentPhoto = _photos[_currentIndex];
     final currentIsVideo = _isVideo(currentPhoto);
 
     // La foto ocupa toda la pantalla desde el primer momento; los controles
@@ -87,18 +116,23 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
               onTap: _toggleBars,
               child: PageView.builder(
                 controller: _pageController,
-                itemCount: widget.photos.length,
+                itemCount: _photos.length,
                 onPageChanged: (i) => setState(() => _currentIndex = i),
                 itemBuilder: (_, i) {
-                  final photo = widget.photos[i];
+                  final photo = _photos[i];
                   if (_isVideo(photo)) {
+                    final autoOpen =
+                        !_autoOpenDone && photo['id'] == _initialId;
+                    if (autoOpen) _autoOpenDone = true;
                     return _VideoThumbPage(
+                      key: ValueKey('v${photo['id']}'),
                       photo: photo,
                       onPlayTap: () => _openVideoPlayer(photo),
-                      autoOpen: i == widget.initialIndex,
+                      autoOpen: autoOpen,
                     );
                   }
-                  return _ZoomablePhoto(photo: photo);
+                  return _ZoomablePhoto(
+                      key: ValueKey('p${photo['id']}'), photo: photo);
                 },
               ),
             ),
@@ -167,7 +201,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
             _pill(
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
               child: Text(
-                '${_currentIndex + 1} / ${widget.photos.length}',
+                '${_currentIndex + 1} / ${_photos.length}',
                 style: GoogleFonts.poppins(color: Colors.white, fontSize: 13),
               ),
             ),
@@ -249,12 +283,10 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
   }
 
   // ── Desbloquear ───────────────────────────────────────────
-  void _unlockPhoto(Map<String, dynamic> photo) {
-    confirmUnlock(
-      context,
-      [photo],
-      onDone: () => Navigator.pop(context),
-    );
+  Future<void> _unlockPhoto(Map<String, dynamic> photo) async {
+    // Pregunta si eliminarla de la bóveda o que se quede.
+    final removed = await confirmUnlock(context, [photo]);
+    if (removed && mounted) _removeFromViewer(photo);
   }
 
   // ── Eliminar / papelera ───────────────────────────────────
@@ -298,7 +330,7 @@ class _PhotoViewerScreenState extends State<PhotoViewerScreen> {
     } else {
       await DBHelper.instance.moveToTrash(photo);
     }
-    if (mounted) Navigator.pop(context);
+    if (mounted) _removeFromViewer(photo);
   }
 
   // ── Información ───────────────────────────────────────────
@@ -377,6 +409,7 @@ class _VideoThumbPage extends StatefulWidget {
   final bool autoOpen;
 
   const _VideoThumbPage({
+    super.key,
     required this.photo,
     required this.onPlayTap,
     this.autoOpen = false,
@@ -492,7 +525,7 @@ class _VideoThumbPageState extends State<_VideoThumbPage> {
 // ── Foto con zoom ────────────────────────────────────────────
 class _ZoomablePhoto extends StatefulWidget {
   final Map<String, dynamic> photo;
-  const _ZoomablePhoto({required this.photo});
+  const _ZoomablePhoto({super.key, required this.photo});
 
   @override
   State<_ZoomablePhoto> createState() => _ZoomablePhotoState();
